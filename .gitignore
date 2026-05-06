@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.taskledger/
+planledger/_version.py
+todo.md
