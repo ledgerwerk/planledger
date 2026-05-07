@@ -15,7 +15,6 @@ from planledger.next_action import suggest_next_action
 from planledger.storage import (
     DECISION_TEMPLATE,
     OPTION_TEMPLATE,
-    PLAN_TEMPLATE,
     active_initiative,
     allocate_id,
     append_event,
@@ -30,6 +29,7 @@ from planledger.storage import (
     parse_ref_numeric,
     record_counts,
     reindex,
+    render_plan_template,
     save_record,
     set_active_initiative,
     update_record_timestamp,
@@ -524,16 +524,27 @@ def initiative_show(ctx: typer.Context, initiative_ref: str) -> None:
 @plan_app.command("draft")
 def plan_draft(
     ctx: typer.Context,
-    initiative: str = typer.Option(..., "--initiative"),
+    initiative: str | None = typer.Option(None, "--initiative"),
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        _ = load_record(workspace, "initiative", initiative)
+        resolved_initiative = initiative
+        if resolved_initiative is None:
+            resolved_initiative = active_initiative(workspace)
+            if resolved_initiative is None:
+                raise PlanledgerError(
+                    "not_found",
+                    "No active initiative.",
+                    remediation=[
+                        "Use --initiative to specify one, or activate an initiative first."
+                    ],
+                )
+        initiative_record = load_record(workspace, "initiative", resolved_initiative)
         plan_id = allocate_id(workspace, "plan")
         existing = [
             plan
             for plan in list_records(workspace, "plan")
-            if plan.front_matter.get("initiative") == initiative
+            if plan.front_matter.get("initiative") == resolved_initiative
         ]
         version = (
             max(
@@ -543,10 +554,15 @@ def plan_draft(
             + 1
         )
         timestamp = now_iso()
+        goal_ref = initiative_record.front_matter.get("goal")
+        goal_record = None
+        if goal_ref is not None:
+            goal_record = load_record(workspace, "goal", str(goal_ref))
         front = {
             "id": plan_id,
             "type": "plan",
-            "initiative": initiative,
+            "goal": goal_ref,
+            "initiative": resolved_initiative,
             "version": version,
             "status": "draft",
             "supersedes": None,
@@ -555,18 +571,23 @@ def plan_draft(
             "created_at": timestamp,
             "updated_at": timestamp,
         }
-        record = create_record(workspace, "plan", front, PLAN_TEMPLATE)
+        plan_body = render_plan_template(
+            initiative=initiative_record,
+            goal=goal_record,
+            version=version,
+        )
+        record = create_record(workspace, "plan", front, plan_body)
         event = append_event(
             workspace,
-            command=f"planledger plan draft --initiative {initiative}",
+            command=f"planledger plan draft --initiative {resolved_initiative}",
             object_type="plan",
             object_id=plan_id,
             event_type="created",
-            after={"initiative": initiative, "version": version},
+            after={"initiative": resolved_initiative, "version": version},
         )
         return (
             {"kind": "planledger_plan", "id": record.record_id, "version": version},
-            f"Drafted plan {record.record_id} (v{version}) for {initiative}",
+            f"Drafted plan {record.record_id} (v{version}) for {resolved_initiative}",
             [event],
         )
 

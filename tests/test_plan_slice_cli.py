@@ -23,6 +23,11 @@ def test_plan_milestone_slice_flow(invoke, initialized_workspace: Path) -> None:
     assert draft_result.exit_code == 0
     assert "plan-0001" in draft_result.stdout
 
+    plan_show_initial = invoke(workspace, "plan", "show", "plan-0001")
+    assert plan_show_initial.exit_code == 0
+    assert "Goal: goal-0001 — Test goal" in plan_show_initial.stdout
+    assert "Initiative: init-0001 — Test initiative" in plan_show_initial.stdout
+
     ms_result = invoke(
         workspace, "milestone", "add", "Milestone one", "--plan", "plan-0001"
     )

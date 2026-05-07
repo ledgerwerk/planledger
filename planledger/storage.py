@@ -87,6 +87,50 @@ PLAN_TEMPLATE = """# Plan
 ## Rollback or repair strategy
 """
 
+
+def _record_reference(record: Record) -> str:
+    title = str(record.front_matter.get("title") or "").strip()
+    if title:
+        return f"{record.record_id} — {title}"
+    return record.record_id
+
+
+def render_plan_template(
+    initiative: Record,
+    goal: Record | None,
+    version: int,
+) -> str:
+    initiative_title = str(initiative.front_matter.get("title") or initiative.record_id)
+    goal_reference = _record_reference(goal) if goal is not None else "not recorded"
+    initiative_reference = _record_reference(initiative)
+    return f"""# Plan: {initiative_title}
+
+## Context
+
+- Goal: {goal_reference}
+- Initiative: {initiative_reference}
+- Version: v{version}
+
+## Objectives
+
+- Define the milestones and slices needed to deliver this initiative.
+
+## Non-goals
+
+## Milestones
+
+## Slices
+
+## Decisions
+
+## Risks
+
+## Validation strategy
+
+## Rollback or repair strategy
+"""
+
+
 DECISION_TEMPLATE = """# Decision
 
 ## Context
@@ -519,10 +563,36 @@ def parse_ref_numeric(record_id: str) -> int:
 def lint_plan(workspace: Workspace, plan: Record) -> LintResult:
     body = plan.body
     issues: list[str] = []
+    slices = [
+        item
+        for item in list_records(workspace, "slice")
+        if item.front_matter.get("plan") == plan.record_id
+    ]
+
     if "## Context" not in body:
         issues.append("Missing section: Context")
+    else:
+        context_start = body.index("## Context") + len("## Context")
+        next_heading = body.find("\n## ", context_start)
+        context_text = (
+            body[context_start:next_heading]
+            if next_heading != -1
+            else body[context_start:]
+        )
+        if "Goal:" not in context_text:
+            issues.append("Context section missing goal reference.")
+        if "Initiative:" not in context_text:
+            issues.append("Context section missing initiative reference.")
     if "## Objectives" not in body:
         issues.append("Missing section: Objectives")
+    else:
+        obj_start = body.index("## Objectives") + len("## Objectives")
+        obj_next = body.find("\n## ", obj_start)
+        objectives_text = (
+            body[obj_start:obj_next] if obj_next != -1 else body[obj_start:]
+        ).strip()
+        if not objectives_text:
+            issues.append("Objectives section is empty.")
 
     milestones = [
         item
@@ -531,12 +601,14 @@ def lint_plan(workspace: Workspace, plan: Record) -> LintResult:
     ]
     if not milestones:
         issues.append("Plan has no milestones.")
+    else:
+        for ms in milestones:
+            ms_slices = [
+                s for s in slices if s.front_matter.get("milestone") == ms.record_id
+            ]
+            if not ms_slices:
+                issues.append(f"Milestone {ms.record_id} has no slices.")
 
-    slices = [
-        item
-        for item in list_records(workspace, "slice")
-        if item.front_matter.get("plan") == plan.record_id
-    ]
     if not slices:
         issues.append("Plan has no slices.")
 
@@ -612,6 +684,46 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
             load_record(workspace, "initiative", active)
         except PlanledgerError:
             issues.append(f"Active initiative {active} does not exist")
+
+    # Referential integrity checks
+    all_records: dict[str, dict[str, Record]] = {}
+    for kind in RECORD_DIRS:
+        all_records[kind] = {r.record_id: r for r in list_records(workspace, kind)}
+
+    for init_record in all_records["initiative"].values():
+        goal_ref = init_record.front_matter.get("goal")
+        if goal_ref and goal_ref not in all_records["goal"]:
+            issues.append(
+                f"Initiative {init_record.record_id} references missing goal {goal_ref}"
+            )
+
+    for plan_record in all_records["plan"].values():
+        init_ref = plan_record.front_matter.get("initiative")
+        if init_ref and init_ref not in all_records["initiative"]:
+            issues.append(
+                f"Plan {plan_record.record_id} references missing initiative {init_ref}"
+            )
+
+    for ms_record in all_records["milestone"].values():
+        plan_ref = ms_record.front_matter.get("plan")
+        if plan_ref and plan_ref not in all_records["plan"]:
+            issues.append(
+                f"Milestone {ms_record.record_id} references missing plan {plan_ref}"
+            )
+
+    for slice_record in all_records["slice"].values():
+        ms_ref = slice_record.front_matter.get("milestone")
+        if ms_ref and ms_ref not in all_records["milestone"]:
+            issues.append(
+                f"Slice {slice_record.record_id} references missing milestone {ms_ref}"
+            )
+
+    for opt_record in all_records["option"].values():
+        dec_ref = opt_record.front_matter.get("decision")
+        if dec_ref and dec_ref not in all_records["decision"]:
+            issues.append(
+                f"Option {opt_record.record_id} references missing decision {dec_ref}"
+            )
 
     return {
         "kind": "planledger_doctor",
