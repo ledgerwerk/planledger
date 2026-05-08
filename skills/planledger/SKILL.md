@@ -8,8 +8,7 @@ metadata:
   workflow: task-management
 ---
 
-skill_version: planledger-skill-v1
----
+## skill_version: planledger-skill-v1
 
 # Planledger Skill
 
@@ -17,13 +16,13 @@ Use planledger as a hidden durable planning control plane. The human does not ne
 
 ## Default workflow
 
-1. Run `planledger status --json` or `planledger context export --json`.
+1. Run `planledger --json status` or `planledger --json context export`.
 2. Determine planning mode: skip, light, full, or repair.
 3. For light/full/repair, read relevant code and prior planledger state.
 4. Produce a `planledger.plan_bundle.v1` JSON bundle.
-5. Validate it with `planledger bundle validate`.
-6. Apply it with `planledger bundle apply`.
-7. Push executable slices with `planledger taskledger push-plan` when requested or when slices are ready.
+5. Validate it with `planledger --json bundle validate --file bundle.json`.
+6. Apply it with `planledger --json bundle apply --file bundle.json`.
+7. Push executable slices with `planledger --json taskledger push-plan plan-0001 --create-tasks` when requested or when slices are ready.
 8. Stop and report only the concise result and next command.
 
 ## Human interaction rules
@@ -62,34 +61,34 @@ Every executable slice in a `planledger.plan_bundle.v1` bundle should include:
 
 ## Context export
 
-Use `planledger context export --json` to get a snapshot of current planning state including active goal, initiative, plan, open decisions, risks, ready slices, bindings, and next action.
+Use `planledger --json context export` to get a snapshot of current planning state including active goal, initiative, plan, open decisions, risks, ready slices, bindings, and next action.
 
 ## Bundle commands
 
 ```bash
-planledger bundle validate bundle.json --json
-planledger bundle apply bundle.json --json
-planledger bundle apply bundle.json --dry-run --json
+planledger --json bundle validate --file bundle.json
+planledger --json bundle apply --file bundle.json
+planledger --json bundle apply --file bundle.json --dry-run
 ```
 
 ## Taskledger handoff
 
 ```bash
-planledger taskledger push-plan plan-0001 --create-tasks --json
-planledger taskledger push-plan plan-0001 --dry-run --json
+planledger --json taskledger push-plan plan-0001 --create-tasks
+planledger --json taskledger push-plan plan-0001 --dry-run
 ```
 
 ## ADR commands
 
 ```bash
 planledger adr create "Decision title" --initiative init-0001
-planledger adr list --initiative init-0001 --json
+planledger --json adr list --initiative init-0001
 planledger adr accept dec-0001 --option opt-0001 --rationale "..."
 ```
 
 ## Backfill for existing projects
 
 ```bash
-planledger backfill apply baseline.json --json
-planledger backfill review --json
+planledger --json backfill apply --file baseline.json
+planledger --json backfill review
 ```
