@@ -25,6 +25,7 @@ from planledger.storage import (
     create_record,
     doctor,
     initialize_project,
+    latest_plan_for_initiative,
     lint_plan,
     list_records,
     load_record,
@@ -314,6 +315,216 @@ def project_reindex(ctx: typer.Context) -> None:
         )
 
     _run_command(ctx, "project.reindex", execute)
+
+
+@app.command("view")
+def project_view(ctx: typer.Context) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        project_name = workspace.config.get("project", {}).get("name", "Planledger")
+        counts = record_counts(workspace)
+        active_init_id = active_initiative(workspace)
+        next_action = suggest_next_action(workspace)
+        doctor_result = doctor(workspace)
+
+        # Build structured result
+        result: dict[str, Any] = {
+            "kind": "planledger_view",
+            "project": {
+                "name": project_name,
+                "root": str(workspace.root),
+                "ledger_ref": workspace.ledger_ref,
+            },
+            "counts": counts,
+            "active_initiative": active_init_id,
+            "doctor_issues": doctor_result.get("issues", []),
+            "next_action": next_action,
+        }
+
+        lines: list[str] = []
+        lines.append(f"Project: {project_name}")
+        lines.append(f"Root: {workspace.root}")
+        lines.append(f"Ledger: {workspace.ledger_ref}")
+        lines.append(f"Counts: {counts}")
+
+        # Active initiative + goal
+        goal_summary: dict[str, Any] | None = None
+        initiative_summary: dict[str, Any] | None = None
+        if active_init_id is not None:
+            try:
+                init_record = load_record(workspace, "initiative", active_init_id)
+                init_title = init_record.front_matter.get("title", "")
+                init_status = init_record.front_matter.get("status", "")
+                initiative_summary = {
+                    "id": active_init_id,
+                    "title": init_title,
+                    "status": init_status,
+                }
+                lines.append("")
+                lines.append(
+                    f"Active initiative: {active_init_id} — {init_title} [{init_status}]"
+                )
+                goal_ref = init_record.front_matter.get("goal")
+                if goal_ref is not None:
+                    try:
+                        goal_record = load_record(workspace, "goal", str(goal_ref))
+                        goal_title = goal_record.front_matter.get("title", "")
+                        goal_status = goal_record.front_matter.get("status", "")
+                        goal_summary = {
+                            "id": str(goal_ref),
+                            "title": goal_title,
+                            "status": goal_status,
+                        }
+                        lines.append(f"Goal: {goal_ref} — {goal_title} [{goal_status}]")
+                    except PlanledgerError:
+                        goal_summary = {"id": str(goal_ref), "error": "not_found"}
+                        lines.append(f"Goal: {goal_ref} (not found)")
+            except PlanledgerError:
+                initiative_summary = {"id": active_init_id, "error": "not_found"}
+                lines.append("")
+                lines.append(f"Active initiative: {active_init_id} (not found)")
+        else:
+            lines.append("")
+            lines.append("Active initiative: none")
+
+        result["goal"] = goal_summary
+        result["initiative"] = initiative_summary
+
+        # Latest plan
+        plan_summary: dict[str, Any] | None = None
+        if active_init_id is not None:
+            latest_plan = latest_plan_for_initiative(workspace, active_init_id)
+            if latest_plan is not None:
+                plan_id = latest_plan.record_id
+                plan_version = latest_plan.front_matter.get("version")
+                plan_status = latest_plan.front_matter.get("status")
+                plan_summary = {
+                    "id": plan_id,
+                    "version": plan_version,
+                    "status": plan_status,
+                }
+                lines.append("")
+                lines.append(f"Plan: {plan_id} v{plan_version} [{plan_status}]")
+
+                # Milestones for this plan
+                milestones = sorted(
+                    [
+                        ms
+                        for ms in list_records(workspace, "milestone")
+                        if ms.front_matter.get("plan") == plan_id
+                    ],
+                    key=lambda m: int(m.front_matter.get("order", 0)),
+                )
+                ms_statuses: dict[str, int] = {}
+                ms_items = []
+                for ms in milestones:
+                    st = ms.front_matter.get("status", "unknown")
+                    ms_statuses[st] = ms_statuses.get(st, 0) + 1
+                    ms_items.append(
+                        {
+                            "id": ms.record_id,
+                            "title": ms.front_matter.get("title", ""),
+                            "status": st,
+                            "order": ms.front_matter.get("order"),
+                        }
+                    )
+                plan_summary["milestones"] = ms_items
+                lines.append(f"Milestones ({len(milestones)}): {ms_statuses or 'none'}")
+                for ms in milestones:
+                    ms_title = ms.front_matter.get("title", "")
+                    ms_status = ms.front_matter.get("status", "")
+                    lines.append(f"  {ms.record_id} {ms_title} [{ms_status}]")
+
+                # Slices for this plan
+                slices = [
+                    s
+                    for s in list_records(workspace, "slice")
+                    if s.front_matter.get("plan") == plan_id
+                ]
+                slice_statuses: dict[str, int] = {}
+                slice_items = []
+                for s in slices:
+                    st = s.front_matter.get("status", "unknown")
+                    slice_statuses[st] = slice_statuses.get(st, 0) + 1
+                    slice_items.append(
+                        {
+                            "id": s.record_id,
+                            "title": s.front_matter.get("title", ""),
+                            "status": st,
+                            "milestone": s.front_matter.get("milestone"),
+                        }
+                    )
+                plan_summary["slices"] = slice_items
+                lines.append(f"Slices ({len(slices)}): {slice_statuses or 'none'}")
+                for s in slices:
+                    s_title = s.front_matter.get("title", "")
+                    s_status = s.front_matter.get("status", "")
+                    lines.append(f"  {s.record_id} {s_title} [{s_status}]")
+            else:
+                lines.append("")
+                lines.append("Plan: none")
+        else:
+            lines.append("")
+            lines.append("Plan: none")
+
+        result["plan"] = plan_summary
+
+        # Open decisions
+        all_decisions = list_records(workspace, "decision")
+        open_decisions = [
+            d for d in all_decisions if d.front_matter.get("status") == "open"
+        ]
+        decision_items = []
+        if open_decisions:
+            lines.append("")
+            lines.append(f"Open decisions ({len(open_decisions)}):")
+            for d in open_decisions:
+                d_title = d.front_matter.get("title", "")
+                decision_items.append({"id": d.record_id, "title": d_title})
+                lines.append(f"  {d.record_id} {d_title}")
+        result["open_decisions"] = decision_items
+
+        # Open risks
+        all_risks = list_records(workspace, "risk")
+        open_risks = [r for r in all_risks if r.front_matter.get("status") == "open"]
+        risk_items = []
+        if open_risks:
+            lines.append("")
+            lines.append(f"Open risks ({len(open_risks)}):")
+            for r in open_risks:
+                r_title = r.front_matter.get("title", "")
+                r_impact = r.front_matter.get("impact", "")
+                risk_items.append(
+                    {"id": r.record_id, "title": r_title, "impact": r_impact}
+                )
+                lines.append(f"  {r.record_id} {r_title} (impact: {r_impact})")
+        result["open_risks"] = risk_items
+
+        # Next action
+        action = next_action.get("action", "")
+        next_cmd = next_action.get("next_command", "")
+        lines.append("")
+        lines.append(f"Next action: {action}")
+        if next_cmd:
+            lines.append(f"  Command: {next_cmd}")
+        blocking = next_action.get("blocking", [])
+        if blocking:
+            for b in blocking:
+                reason = b.get("reason", "")
+                if reason:
+                    lines.append(f"  Blocking: {reason}")
+
+        # Doctor issues
+        issues = doctor_result.get("issues", [])
+        if issues:
+            lines.append("")
+            lines.append(f"Doctor issues ({len(issues)}):")
+            for issue in issues:
+                lines.append(f"  - {issue}")
+
+        return result, "\n".join(lines), []
+
+    _run_command(ctx, "project.view", execute)
 
 
 @context_app.command("export")
