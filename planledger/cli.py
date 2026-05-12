@@ -12,11 +12,26 @@ from planledger import __version__
 from planledger.backfill import backfill_apply, backfill_review
 from planledger.bundle import (
     apply_bundle,
+    apply_evolution_bundle,
     load_bundle,
     validate_bundle_details,
+    validate_evolution_details,
 )
 from planledger.context import export_context
 from planledger.errors import PlanledgerError
+from planledger.lifecycle import (
+    ACTIVE_GOAL_STATUSES,
+    EXECUTION_BLOCKING_GOAL_STATUSES,
+    EXECUTION_BLOCKING_INITIATIVE_STATUSES,
+    TERMINAL_GOAL_STATUSES,
+    TERMINAL_INITIATIVE_STATUSES,
+    TERMINAL_PLAN_STATUSES,
+    blocks_execution,
+    is_terminal,
+    link_records,
+    require_not_terminal,
+    transition_record,
+)
 from planledger.models import AppContext, Record
 from planledger.next_action import suggest_next_action
 from planledger.storage import (
@@ -63,8 +78,13 @@ slice_app = typer.Typer(help="Slice commands")
 decision_app = typer.Typer(help="Decision commands")
 option_app = typer.Typer(help="Option commands")
 risk_app = typer.Typer(help="Risk commands")
+question_app = typer.Typer(help="Question commands")
+assumption_app = typer.Typer(help="Assumption commands")
+constraint_app = typer.Typer(help="Constraint commands")
+review_app = typer.Typer(help="Review commands")
 taskledger_app = typer.Typer(help="taskledger integration")
 bundle_app = typer.Typer(help="Bundle import")
+evolution_app = typer.Typer(help="Evolution bundle commands")
 context_app = typer.Typer(help="Context export")
 adr_app = typer.Typer(help="Architectural Decision Records")
 backfill_app = typer.Typer(help="Existing project backfill")
@@ -76,11 +96,26 @@ app.add_typer(slice_app, name="slice")
 app.add_typer(decision_app, name="decision")
 app.add_typer(option_app, name="option")
 app.add_typer(risk_app, name="risk")
+app.add_typer(question_app, name="question")
+app.add_typer(assumption_app, name="assumption")
+app.add_typer(constraint_app, name="constraint")
+app.add_typer(review_app, name="review")
 app.add_typer(taskledger_app, name="taskledger")
 app.add_typer(bundle_app, name="bundle")
+app.add_typer(evolution_app, name="evolution")
 app.add_typer(context_app, name="context")
 app.add_typer(adr_app, name="adr")
 app.add_typer(backfill_app, name="backfill")
+
+PRIORITY_LEVELS = {"low", "medium", "high"}
+GOAL_HORIZONS = {"now", "week", "month", "quarter", "later"}
+ACTIVE_PLAN_STATUSES = {"draft", "accepted"}
+QUESTION_TEMPLATE = "# Question\n\n## Context\n\n## Answer\n"
+ASSUMPTION_TEMPLATE = "# Assumption\n\n## Basis\n\n## Evidence\n"
+CONSTRAINT_TEMPLATE = "# Constraint\n\n## Rationale\n"
+REVIEW_TEMPLATE = (
+    "# Review\n\n## Findings\n\n## Recommendations\n"
+)
 
 
 def _version_callback(value: bool) -> None:
@@ -185,6 +220,208 @@ def _record_human(record: Record) -> str:
         lines.append("")
         lines.append(record.body.strip())
     return "\n".join(lines)
+
+
+def _validate_choice(field_name: str, value: str, allowed: set[str]) -> str:
+    if value not in allowed:
+        raise PlanledgerError(
+            "invalid_option",
+            f"Invalid {field_name} {value!r}. Allowed: {sorted(allowed)}.",
+        )
+    return value
+
+
+def _sort_records(records: list[Record]) -> list[Record]:
+    return sorted(records, key=lambda item: parse_ref_numeric(item.record_id))
+
+
+def _filter_records(
+    records: list[Record],
+    *,
+    status: str | None,
+    active: bool,
+    closed: bool,
+    all_records: bool,
+    active_statuses: set[str],
+    terminal_statuses: set[str],
+) -> list[Record]:
+    selected_flags = sum(
+        (
+            1 if status is not None else 0,
+            1 if active else 0,
+            1 if closed else 0,
+            1 if all_records else 0,
+        )
+    )
+    if selected_flags > 1:
+        raise PlanledgerError(
+            "invalid_options",
+            "Use at most one of --status, --active, --closed, or --all.",
+        )
+    if status is not None:
+        return [item for item in records if item.front_matter.get("status") == status]
+    if active:
+        return [
+            item for item in records if item.front_matter.get("status") in active_statuses
+        ]
+    if closed:
+        return [
+            item
+            for item in records
+            if item.front_matter.get("status") in terminal_statuses
+        ]
+    return records
+
+
+def _format_record_line(record: Record, *, active_marker: bool = False) -> str:
+    title = str(record.front_matter.get("title") or "")
+    status = str(record.front_matter.get("status") or "unknown")
+    line = f"{record.record_id} {title} [{status}]".strip()
+    close_reason = record.front_matter.get("close_reason")
+    if close_reason:
+        line += f" — {close_reason}"
+    if active_marker:
+        return f"* {line}"
+    return line
+
+
+def _goal_for_initiative(workspace: Any, initiative_record: Record) -> Record | None:
+    goal_ref = initiative_record.front_matter.get("goal")
+    if goal_ref is None:
+        return None
+    return load_record(workspace, "goal", str(goal_ref))
+
+
+def _initiative_for_plan(workspace: Any, plan_record: Record) -> Record:
+    initiative_ref = plan_record.front_matter.get("initiative")
+    if initiative_ref is None:
+        raise PlanledgerError(
+            "invalid_record",
+            f"Plan {plan_record.record_id} has no initiative reference.",
+        )
+    return load_record(workspace, "initiative", str(initiative_ref))
+
+
+def _goal_for_plan(workspace: Any, plan_record: Record) -> Record | None:
+    initiative_record = _initiative_for_plan(workspace, plan_record)
+    return _goal_for_initiative(workspace, initiative_record)
+
+
+def _plan_for_slice(workspace: Any, slice_record: Record) -> Record:
+    plan_ref = slice_record.front_matter.get("plan")
+    if plan_ref is None:
+        raise PlanledgerError(
+            "invalid_record",
+            f"Slice {slice_record.record_id} has no plan reference.",
+        )
+    return load_record(workspace, "plan", str(plan_ref))
+
+
+def _require_parent_available(parent: Record, action: str) -> None:
+    status_value = parent.front_matter.get("status")
+    status = str(status_value) if status_value is not None else None
+    if not blocks_execution(parent.kind, status):
+        return
+    error_kind = "terminal_parent" if is_terminal(parent.kind, status) else "inactive_parent"
+    raise PlanledgerError(
+        error_kind,
+        f"Cannot {action} because parent {parent.kind} {parent.record_id} is {status}.",
+        remediation=[
+            f"Inspect: planledger {parent.kind} show {parent.record_id}",
+            "Use planledger view to inspect current goals and initiatives.",
+        ],
+    )
+
+
+def _cascade_initiative_cancellations(
+    workspace: Any,
+    goal_record: Record,
+    *,
+    command: str,
+    reason: str,
+    ) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for initiative in list_records(workspace, "initiative"):
+        if initiative.front_matter.get("goal") != goal_record.record_id:
+            continue
+        initiative_status = initiative.front_matter.get("status")
+        status = str(initiative_status) if initiative_status is not None else None
+        if is_terminal("initiative", status):
+            continue
+        child_reason = (
+            f"Parent goal {goal_record.record_id} changed direction: {reason}"
+        )
+        events.append(
+            transition_record(
+                workspace,
+                initiative,
+                new_status="cancelled",
+                command=command,
+                reason=child_reason,
+            )
+        )
+        _clear_active_initiative_if_needed(workspace, initiative.record_id)
+    return events
+
+
+def _clear_active_initiative_if_needed(workspace: Any, initiative_id: str) -> None:
+    if active_initiative(workspace) == initiative_id:
+        set_active_initiative(workspace, None)
+
+
+def _require_plan_lineage_available(
+    workspace: Any,
+    plan_record: Record,
+    action: str,
+    *,
+    include_plan: bool = False,
+) -> None:
+    initiative = _initiative_for_plan(workspace, plan_record)
+    _require_parent_available(initiative, action)
+    goal = _goal_for_initiative(workspace, initiative)
+    if goal is not None:
+        _require_parent_available(goal, action)
+    if include_plan:
+        _require_parent_available(plan_record, action)
+
+
+def _resolve_scope_from_refs(
+    workspace: Any,
+    *,
+    goal_ref: str | None,
+    initiative_ref: str | None,
+    allow_project: bool = True,
+) -> tuple[str, str | None]:
+    if goal_ref is not None and initiative_ref is not None:
+        raise PlanledgerError(
+            "invalid_options",
+            "Use only one of --goal or --initiative.",
+        )
+    if goal_ref is not None:
+        _ = load_record(workspace, "goal", goal_ref)
+        return "goal", goal_ref
+    if initiative_ref is not None:
+        _ = load_record(workspace, "initiative", initiative_ref)
+        return "initiative", initiative_ref
+    if allow_project:
+        return "project", None
+    raise PlanledgerError(
+        "invalid_options",
+        "A scope is required.",
+    )
+
+
+def _resolve_scope_selector(scope_ref: str) -> tuple[str, str]:
+    if scope_ref.startswith("goal-"):
+        return "goal", scope_ref
+    if scope_ref.startswith("init-"):
+        return "initiative", scope_ref
+    if scope_ref.startswith("plan-"):
+        return "plan", scope_ref
+    raise PlanledgerError(
+        "invalid_options",
+        f"Unsupported scope selector {scope_ref!r}.",
+    )
 
 
 @app.command("init")
@@ -333,10 +570,14 @@ def project_view(ctx: typer.Context) -> None:
         project_name = workspace.config.get("project", {}).get("name", "Planledger")
         counts = record_counts(workspace)
         active_init_id = active_initiative(workspace)
-        next_action = suggest_next_action(workspace)
+        context_result = export_context(
+            workspace,
+            max_events=5,
+            allow_external=True,
+        )
+        next_action = context_result["next_action"]
         doctor_result = doctor(workspace)
 
-        # Build structured result
         result: dict[str, Any] = {
             "kind": "planledger_view",
             "project": {
@@ -348,6 +589,11 @@ def project_view(ctx: typer.Context) -> None:
             "active_initiative": active_init_id,
             "doctor_issues": doctor_result.get("issues", []),
             "next_action": next_action,
+            "goals": context_result["goals"],
+            "questions": context_result["questions"],
+            "assumptions": context_result["assumptions"],
+            "constraints": context_result["constraints"],
+            "handoff": context_result["handoff"],
         }
 
         lines: list[str] = []
@@ -356,7 +602,6 @@ def project_view(ctx: typer.Context) -> None:
         lines.append(f"Ledger: {workspace.ledger_ref}")
         lines.append(f"Counts: {counts}")
 
-        # Active initiative + goal
         goal_summary: dict[str, Any] | None = None
         initiative_summary: dict[str, Any] | None = None
         if active_init_id is not None:
@@ -399,7 +644,6 @@ def project_view(ctx: typer.Context) -> None:
         result["goal"] = goal_summary
         result["initiative"] = initiative_summary
 
-        # Latest plan
         plan_summary: dict[str, Any] | None = None
         if active_init_id is not None:
             latest_plan = latest_plan_for_initiative(workspace, active_init_id)
@@ -478,38 +722,97 @@ def project_view(ctx: typer.Context) -> None:
 
         result["plan"] = plan_summary
 
-        # Open decisions
-        all_decisions = list_records(workspace, "decision")
-        open_decisions = [
-            d for d in all_decisions if d.front_matter.get("status") == "open"
+        lines.append("")
+        lines.append("Goals:")
+        for label, key in (
+            ("Active", "active"),
+            ("Exploring", "exploring"),
+            ("Parked", "parked"),
+            ("Recently closed", "closed_recent"),
+        ):
+            items = result["goals"][key]
+            lines.append(f"  {label} ({len(items)})")
+            for item in items:
+                front = item["front_matter"]
+                title = front.get("title", "")
+                status = front.get("status", "")
+                close_reason = front.get("close_reason")
+                line = f"    {item['id']} {title} [{status}]"
+                if close_reason:
+                    line += f" — {close_reason}"
+                lines.append(line)
+
+        open_questions = result["questions"]["open"]
+        lines.append("")
+        lines.append(f"Open questions ({len(open_questions)}):")
+        for item in open_questions:
+            front = item["front_matter"]
+            lines.append(
+                f"  {item['id']} {front.get('title', '')} [{front.get('scope_id') or front.get('scope_kind')}]"
+            )
+
+        unverified_assumptions = result["assumptions"]["unverified"]
+        lines.append("")
+        lines.append(f"Unverified assumptions ({len(unverified_assumptions)}):")
+        for item in unverified_assumptions:
+            front = item["front_matter"]
+            lines.append(
+                f"  {item['id']} {front.get('title', '')} [{front.get('confidence', '')}]"
+            )
+
+        active_constraints = result["constraints"]["active"]
+        if active_constraints:
+            lines.append("")
+            lines.append(f"Active constraints ({len(active_constraints)}):")
+            for item in active_constraints:
+                front = item["front_matter"]
+                lines.append(
+                    f"  {item['id']} {front.get('title', '')} [{front.get('scope_kind', '')}]"
+                )
+
+        lines.append("")
+        lines.append("Current execution:")
+        lines.append(
+            f"  Ready slices: {len(result['handoff']['ready_for_taskledger'])}"
+        )
+        lines.append(
+            f"  In execution: {len(context_result['current']['executing_slices'])}"
+        )
+        if result["handoff"]["blocked_from_taskledger"]:
+            lines.append(
+                f"  Blocked from taskledger: {len(result['handoff']['blocked_from_taskledger'])}"
+            )
+
+        open_decisions = context_result["blocked"]["open_decisions"]
+        decision_items = [
+            {"id": item["id"], "title": item["front_matter"].get("title")}
+            for item in open_decisions
         ]
-        decision_items = []
         if open_decisions:
             lines.append("")
             lines.append(f"Open decisions ({len(open_decisions)}):")
-            for d in open_decisions:
-                d_title = d.front_matter.get("title", "")
-                decision_items.append({"id": d.record_id, "title": d_title})
-                lines.append(f"  {d.record_id} {d_title}")
+            for item in open_decisions:
+                lines.append(f"  {item['id']} {item['front_matter'].get('title', '')}")
         result["open_decisions"] = decision_items
 
-        # Open risks
-        all_risks = list_records(workspace, "risk")
-        open_risks = [r for r in all_risks if r.front_matter.get("status") == "open"]
-        risk_items = []
+        open_risks = context_result["blocked"]["open_risks"]
+        risk_items = [
+            {
+                "id": item["id"],
+                "title": item["front_matter"].get("title"),
+                "impact": item["front_matter"].get("impact"),
+            }
+            for item in open_risks
+        ]
         if open_risks:
             lines.append("")
             lines.append(f"Open risks ({len(open_risks)}):")
-            for r in open_risks:
-                r_title = r.front_matter.get("title", "")
-                r_impact = r.front_matter.get("impact", "")
-                risk_items.append(
-                    {"id": r.record_id, "title": r_title, "impact": r_impact}
+            for item in open_risks:
+                lines.append(
+                    f"  {item['id']} {item['front_matter'].get('title', '')} (impact: {item['front_matter'].get('impact', '')})"
                 )
-                lines.append(f"  {r.record_id} {r_title} (impact: {r_impact})")
         result["open_risks"] = risk_items
 
-        # Next action
         action = next_action.get("action", "")
         next_cmd = next_action.get("next_command", "")
         lines.append("")
@@ -523,7 +826,6 @@ def project_view(ctx: typer.Context) -> None:
                 if reason:
                     lines.append(f"  Blocking: {reason}")
 
-        # Doctor issues
         issues = doctor_result.get("issues", [])
         if issues:
             lines.append("")
@@ -580,18 +882,28 @@ def context_export(
 
 
 @goal_app.command("create")
-def goal_create(ctx: typer.Context, title: str) -> None:
+def goal_create(
+    ctx: typer.Context,
+    title: str,
+    status: str = typer.Option("active", "--status"),
+    priority: str = typer.Option("high", "--priority"),
+    horizon: str = typer.Option("quarter", "--horizon"),
+) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
+        resolved_status = _validate_choice("status", status, {"exploring", "active"})
+        resolved_priority = _validate_choice("priority", priority, PRIORITY_LEVELS)
+        resolved_horizon = _validate_choice("horizon", horizon, GOAL_HORIZONS)
         goal_id = allocate_id(workspace, "goal")
         timestamp = now_iso()
         front = {
             "id": goal_id,
             "type": "goal",
             "title": title,
-            "status": "active",
-            "horizon": "quarter",
-            "priority": "high",
+            "status": resolved_status,
+            "horizon": resolved_horizon,
+            "priority": resolved_priority,
+            "confidence": "medium",
             "success_metrics": [],
             "created_at": timestamp,
             "updated_at": timestamp,
@@ -599,14 +911,27 @@ def goal_create(ctx: typer.Context, title: str) -> None:
         create_record(workspace, "goal", front, "")
         event = append_event(
             workspace,
-            command=f"planledger goal create {title}",
+            command=(
+                f"planledger goal create {title} --status {resolved_status} "
+                f"--priority {resolved_priority} --horizon {resolved_horizon}"
+            ),
             object_type="goal",
             object_id=goal_id,
             event_type="created",
-            after={"title": title},
+            after={
+                "title": title,
+                "status": resolved_status,
+                "priority": resolved_priority,
+                "horizon": resolved_horizon,
+            },
         )
         return (
-            {"kind": "planledger_goal", "id": goal_id, "title": title},
+            {
+                "kind": "planledger_goal",
+                "id": goal_id,
+                "title": title,
+                "status": resolved_status,
+            },
             f"Created goal {goal_id}: {title}",
             [event],
         )
@@ -615,21 +940,39 @@ def goal_create(ctx: typer.Context, title: str) -> None:
 
 
 @goal_app.command("list")
-def goal_list(ctx: typer.Context) -> None:
+def goal_list(
+    ctx: typer.Context,
+    status: str | None = typer.Option(None, "--status"),
+    active: bool = typer.Option(False, "--active"),
+    closed: bool = typer.Option(False, "--closed"),
+    all_records: bool = typer.Option(False, "--all"),
+) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        goals = list_records(workspace, "goal")
+        resolved_status = (
+            _validate_choice("status", status, ACTIVE_GOAL_STATUSES | TERMINAL_GOAL_STATUSES | {"parked"})
+            if status is not None
+            else None
+        )
+        goals = _filter_records(
+            _sort_records(list_records(workspace, "goal")),
+            status=resolved_status,
+            active=active,
+            closed=closed,
+            all_records=all_records,
+            active_statuses=ACTIVE_GOAL_STATUSES,
+            terminal_statuses=TERMINAL_GOAL_STATUSES,
+        )
         payload = [
             {
                 "id": item.record_id,
                 "title": item.front_matter.get("title"),
                 "status": item.front_matter.get("status"),
+                "close_reason": item.front_matter.get("close_reason"),
             }
             for item in goals
         ]
-        message = "\n".join(
-            [f"{item['id']} {item['title']} [{item['status']}]" for item in payload]
-        )
+        message = "\n".join([_format_record_line(item) for item in goals])
         return (
             {"kind": "planledger_goal_list", "goals": payload},
             message or "No goals.",
@@ -658,6 +1001,292 @@ def goal_show(ctx: typer.Context, goal_ref: str) -> None:
     _run_command(ctx, "goal.show", execute)
 
 
+@goal_app.command("activate")
+def goal_activate(
+    ctx: typer.Context,
+    goal_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        goal = load_record(workspace, "goal", goal_ref)
+        require_not_terminal(goal, "activate")
+        event = transition_record(
+            workspace,
+            goal,
+            new_status="active",
+            command=f"planledger goal activate {goal_ref} --reason {reason}",
+            reason=reason,
+        )
+        return (
+            {"kind": "planledger_goal_status", "id": goal_ref, "status": "active"},
+            f"Activated goal {goal_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "goal.activate", execute)
+
+
+@goal_app.command("complete")
+def goal_complete(
+    ctx: typer.Context,
+    goal_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+    evidence: str = typer.Option("", "--evidence"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        goal = load_record(workspace, "goal", goal_ref)
+        require_not_terminal(goal, "complete")
+        extra: dict[str, Any] = {}
+        if evidence:
+            extra["evidence"] = [evidence]
+        event = transition_record(
+            workspace,
+            goal,
+            new_status="fulfilled",
+            command=f"planledger goal complete {goal_ref} --reason {reason}",
+            reason=reason,
+            extra=extra,
+        )
+        return (
+            {"kind": "planledger_goal_status", "id": goal_ref, "status": "fulfilled"},
+            f"Completed goal {goal_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "goal.complete", execute)
+
+
+@goal_app.command("cancel")
+def goal_cancel(
+    ctx: typer.Context,
+    goal_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+    because_goal: str | None = typer.Option(None, "--because-goal"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        goal = load_record(workspace, "goal", goal_ref)
+        require_not_terminal(goal, "cancel")
+        events = [
+            transition_record(
+                workspace,
+                goal,
+                new_status="cancelled",
+                command=f"planledger goal cancel {goal_ref} --reason {reason}",
+                reason=reason,
+            )
+        ]
+        if because_goal is not None:
+            _ = load_record(workspace, "goal", because_goal)
+            events.append(
+                link_records(
+                    workspace,
+                    goal,
+                    "invalidated_by",
+                    because_goal,
+                    command=(
+                        f"planledger goal cancel {goal_ref} --reason {reason} "
+                        f"--because-goal {because_goal}"
+                    ),
+                )
+            )
+            events.append(
+                link_records(
+                    workspace,
+                    goal,
+                    "related_goals",
+                    because_goal,
+                    command=(
+                        f"planledger goal cancel {goal_ref} --reason {reason} "
+                        f"--because-goal {because_goal}"
+                    ),
+                )
+            )
+        events.extend(
+            _cascade_initiative_cancellations(
+                workspace,
+                goal,
+                command=f"planledger goal cancel {goal_ref} --reason {reason}",
+                reason=reason,
+            )
+        )
+        return (
+            {"kind": "planledger_goal_status", "id": goal_ref, "status": "cancelled"},
+            f"Cancelled goal {goal_ref}",
+            events,
+        )
+
+    _run_command(ctx, "goal.cancel", execute)
+
+
+@goal_app.command("park")
+def goal_park(
+    ctx: typer.Context,
+    goal_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        goal = load_record(workspace, "goal", goal_ref)
+        require_not_terminal(goal, "park")
+        event = transition_record(
+            workspace,
+            goal,
+            new_status="parked",
+            command=f"planledger goal park {goal_ref} --reason {reason}",
+            reason=reason,
+            extra={"park_reason": reason},
+        )
+        return (
+            {"kind": "planledger_goal_status", "id": goal_ref, "status": "parked"},
+            f"Parked goal {goal_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "goal.park", execute)
+
+
+@goal_app.command("supersede")
+def goal_supersede(
+    ctx: typer.Context,
+    goal_ref: str,
+    new_title: str = typer.Option(..., "--new-title"),
+    reason: str = typer.Option(..., "--reason"),
+    status: str = typer.Option("active", "--status"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        goal = load_record(workspace, "goal", goal_ref)
+        require_not_terminal(goal, "supersede")
+        new_status = _validate_choice("status", status, {"exploring", "active"})
+        new_goal_id = allocate_id(workspace, "goal")
+        timestamp = now_iso()
+        new_front = {
+            "id": new_goal_id,
+            "type": "goal",
+            "title": new_title,
+            "status": new_status,
+            "horizon": goal.front_matter.get("horizon", "quarter"),
+            "priority": goal.front_matter.get("priority", "high"),
+            "confidence": goal.front_matter.get("confidence", "medium"),
+            "success_metrics": list(goal.front_matter.get("success_metrics") or []),
+            "supersedes": [goal_ref],
+            "related_goals": [goal_ref],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        create_record(workspace, "goal", new_front, goal.body)
+        events = [
+            append_event(
+                workspace,
+                command=(
+                    f"planledger goal supersede {goal_ref} --new-title {new_title} "
+                    f"--reason {reason} --status {new_status}"
+                ),
+                object_type="goal",
+                object_id=new_goal_id,
+                event_type="created",
+                after={"title": new_title, "status": new_status},
+            ),
+            transition_record(
+                workspace,
+                goal,
+                new_status="superseded",
+                command=(
+                    f"planledger goal supersede {goal_ref} --new-title {new_title} "
+                    f"--reason {reason} --status {new_status}"
+                ),
+                reason=reason,
+                extra={"superseded_by": new_goal_id},
+            ),
+        ]
+        events.extend(
+            _cascade_initiative_cancellations(
+                workspace,
+                goal,
+                command=(
+                    f"planledger goal supersede {goal_ref} --new-title {new_title} "
+                    f"--reason {reason}"
+                ),
+                reason=reason,
+            )
+        )
+        return (
+            {
+                "kind": "planledger_goal_supersede",
+                "old_goal": goal_ref,
+                "new_goal": new_goal_id,
+            },
+            f"Superseded goal {goal_ref} with {new_goal_id}",
+            events,
+        )
+
+    _run_command(ctx, "goal.supersede", execute)
+
+
+@goal_app.command("revise")
+def goal_revise(
+    ctx: typer.Context,
+    goal_ref: str,
+    title: str | None = typer.Option(None, "--title"),
+    priority: str | None = typer.Option(None, "--priority"),
+    horizon: str | None = typer.Option(None, "--horizon"),
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        goal = load_record(workspace, "goal", goal_ref)
+        require_not_terminal(goal, "revise")
+        if title is None and priority is None and horizon is None:
+            raise PlanledgerError(
+                "invalid_options",
+                "Provide at least one of --title, --priority, or --horizon.",
+            )
+        before = {
+            "title": goal.front_matter.get("title"),
+            "priority": goal.front_matter.get("priority"),
+            "horizon": goal.front_matter.get("horizon"),
+            "status": goal.front_matter.get("status"),
+        }
+        if title is not None:
+            goal.front_matter["title"] = title
+        if priority is not None:
+            goal.front_matter["priority"] = _validate_choice(
+                "priority", priority, PRIORITY_LEVELS
+            )
+        if horizon is not None:
+            goal.front_matter["horizon"] = _validate_choice(
+                "horizon", horizon, GOAL_HORIZONS
+            )
+        update_record_timestamp(goal)
+        save_record(goal)
+        after = {
+            "title": goal.front_matter.get("title"),
+            "priority": goal.front_matter.get("priority"),
+            "horizon": goal.front_matter.get("horizon"),
+            "status": goal.front_matter.get("status"),
+            "reason": reason,
+        }
+        event = append_event(
+            workspace,
+            command=f"planledger goal revise {goal_ref} --reason {reason}",
+            object_type="goal",
+            object_id=goal_ref,
+            event_type="revised",
+            before=before,
+            after=after,
+        )
+        return (
+            {"kind": "planledger_goal_revision", "id": goal_ref, "front_matter": goal.front_matter},
+            f"Revised goal {goal_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "goal.revise", execute)
+
+
 @initiative_app.command("create")
 def initiative_create(
     ctx: typer.Context,
@@ -666,7 +1295,8 @@ def initiative_create(
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        _ = load_record(workspace, "goal", goal)
+        goal_record = load_record(workspace, "goal", goal)
+        _require_parent_available(goal_record, f"create initiative under goal {goal}")
         initiative_id = allocate_id(workspace, "initiative")
         timestamp = now_iso()
         front = {
@@ -703,6 +1333,11 @@ def initiative_create(
 def initiative_activate(ctx: typer.Context, initiative_ref: str) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
+        initiative = load_record(workspace, "initiative", initiative_ref)
+        require_not_terminal(initiative, "activate")
+        goal = _goal_for_initiative(workspace, initiative)
+        if goal is not None:
+            _require_parent_available(goal, f"activate initiative {initiative_ref}")
         set_active_initiative(workspace, initiative_ref)
         event = append_event(
             workspace,
@@ -751,11 +1386,43 @@ def initiative_active(ctx: typer.Context) -> None:
 
 
 @initiative_app.command("list")
-def initiative_list(ctx: typer.Context) -> None:
+def initiative_list(
+    ctx: typer.Context,
+    status: str | None = typer.Option(None, "--status"),
+    active: bool = typer.Option(False, "--active"),
+    closed: bool = typer.Option(False, "--closed"),
+    all_records: bool = typer.Option(False, "--all"),
+) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        active = active_initiative(workspace)
-        initiatives = list_records(workspace, "initiative")
+        active_id = active_initiative(workspace)
+        if sum((1 if status is not None else 0, 1 if active else 0, 1 if closed else 0, 1 if all_records else 0)) > 1:
+            raise PlanledgerError(
+                "invalid_options",
+                "Use at most one of --status, --active, --closed, or --all.",
+            )
+        initiatives = _sort_records(list_records(workspace, "initiative"))
+        if status is not None:
+            resolved_status = _validate_choice(
+                "status",
+                status,
+                {"shaping", "planned", "executing", "fulfilled", "cancelled", "superseded", "parked"},
+            )
+            initiatives = [
+                item
+                for item in initiatives
+                if item.front_matter.get("status") == resolved_status
+            ]
+        elif active:
+            initiatives = [
+                item for item in initiatives if item.record_id == active_id
+            ]
+        elif closed:
+            initiatives = [
+                item
+                for item in initiatives
+                if item.front_matter.get("status") in TERMINAL_INITIATIVE_STATUSES
+            ]
         payload = []
         lines = []
         for item in initiatives:
@@ -763,11 +1430,10 @@ def initiative_list(ctx: typer.Context) -> None:
                 "id": item.record_id,
                 "title": item.front_matter.get("title"),
                 "status": item.front_matter.get("status"),
-                "active": item.record_id == active,
+                "active": item.record_id == active_id,
             }
             payload.append(row)
-            marker = "*" if row["active"] else " "
-            lines.append(f"{marker} {row['id']} {row['title']} [{row['status']}]")
+            lines.append(_format_record_line(item, active_marker=row["active"]))
         return (
             {"kind": "planledger_initiative_list", "initiatives": payload},
             "\n".join(lines) or "No initiatives.",
@@ -796,6 +1462,157 @@ def initiative_show(ctx: typer.Context, initiative_ref: str) -> None:
     _run_command(ctx, "initiative.show", execute)
 
 
+@initiative_app.command("complete")
+def initiative_complete(
+    ctx: typer.Context,
+    initiative_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+    evidence: str = typer.Option("", "--evidence"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        initiative = load_record(workspace, "initiative", initiative_ref)
+        require_not_terminal(initiative, "complete")
+        extra: dict[str, Any] = {}
+        if evidence:
+            extra["evidence"] = [evidence]
+        event = transition_record(
+            workspace,
+            initiative,
+            new_status="fulfilled",
+            command=f"planledger initiative complete {initiative_ref} --reason {reason}",
+            reason=reason,
+            extra=extra,
+        )
+        _clear_active_initiative_if_needed(workspace, initiative_ref)
+        return (
+            {
+                "kind": "planledger_initiative_status",
+                "id": initiative_ref,
+                "status": "fulfilled",
+            },
+            f"Completed initiative {initiative_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "initiative.complete", execute)
+
+
+@initiative_app.command("cancel")
+def initiative_cancel(
+    ctx: typer.Context,
+    initiative_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        initiative = load_record(workspace, "initiative", initiative_ref)
+        require_not_terminal(initiative, "cancel")
+        event = transition_record(
+            workspace,
+            initiative,
+            new_status="cancelled",
+            command=f"planledger initiative cancel {initiative_ref} --reason {reason}",
+            reason=reason,
+        )
+        _clear_active_initiative_if_needed(workspace, initiative_ref)
+        return (
+            {
+                "kind": "planledger_initiative_status",
+                "id": initiative_ref,
+                "status": "cancelled",
+            },
+            f"Cancelled initiative {initiative_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "initiative.cancel", execute)
+
+
+@initiative_app.command("park")
+def initiative_park(
+    ctx: typer.Context,
+    initiative_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        initiative = load_record(workspace, "initiative", initiative_ref)
+        require_not_terminal(initiative, "park")
+        event = transition_record(
+            workspace,
+            initiative,
+            new_status="parked",
+            command=f"planledger initiative park {initiative_ref} --reason {reason}",
+            reason=reason,
+            extra={"park_reason": reason},
+        )
+        return (
+            {"kind": "planledger_initiative_status", "id": initiative_ref, "status": "parked"},
+            f"Parked initiative {initiative_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "initiative.park", execute)
+
+
+@initiative_app.command("revise")
+def initiative_revise(
+    ctx: typer.Context,
+    initiative_ref: str,
+    title: str | None = typer.Option(None, "--title"),
+    priority: str | None = typer.Option(None, "--priority"),
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        initiative = load_record(workspace, "initiative", initiative_ref)
+        require_not_terminal(initiative, "revise")
+        if title is None and priority is None:
+            raise PlanledgerError(
+                "invalid_options",
+                "Provide at least one of --title or --priority.",
+            )
+        before = {
+            "title": initiative.front_matter.get("title"),
+            "priority": initiative.front_matter.get("priority"),
+            "status": initiative.front_matter.get("status"),
+        }
+        if title is not None:
+            initiative.front_matter["title"] = title
+        if priority is not None:
+            initiative.front_matter["priority"] = _validate_choice(
+                "priority", priority, PRIORITY_LEVELS
+            )
+        update_record_timestamp(initiative)
+        save_record(initiative)
+        event = append_event(
+            workspace,
+            command=f"planledger initiative revise {initiative_ref} --reason {reason}",
+            object_type="initiative",
+            object_id=initiative_ref,
+            event_type="revised",
+            before=before,
+            after={
+                "title": initiative.front_matter.get("title"),
+                "priority": initiative.front_matter.get("priority"),
+                "status": initiative.front_matter.get("status"),
+                "reason": reason,
+            },
+        )
+        return (
+            {
+                "kind": "planledger_initiative_revision",
+                "id": initiative_ref,
+                "front_matter": initiative.front_matter,
+            },
+            f"Revised initiative {initiative_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "initiative.revise", execute)
+
+
 @plan_app.command("draft")
 def plan_draft(
     ctx: typer.Context,
@@ -815,6 +1632,12 @@ def plan_draft(
                     ],
                 )
         initiative_record = load_record(workspace, "initiative", resolved_initiative)
+        require_not_terminal(initiative_record, "draft plan for")
+        goal_record = _goal_for_initiative(workspace, initiative_record)
+        if goal_record is not None:
+            _require_parent_available(
+                goal_record, f"draft plan for initiative {resolved_initiative}"
+            )
         plan_id = allocate_id(workspace, "plan")
         existing = [
             plan
@@ -825,14 +1648,11 @@ def plan_draft(
             max(
                 (int(plan.front_matter.get("version", 0)) for plan in existing),
                 default=0,
-            )
+        )
             + 1
         )
         timestamp = now_iso()
         goal_ref = initiative_record.front_matter.get("goal")
-        goal_record = None
-        if goal_ref is not None:
-            goal_record = load_record(workspace, "goal", str(goal_ref))
         front = {
             "id": plan_id,
             "type": "plan",
@@ -890,18 +1710,39 @@ def plan_show(ctx: typer.Context, plan_ref: str) -> None:
 
 @plan_app.command("list")
 def plan_list(
-    ctx: typer.Context, initiative: str | None = typer.Option(None, "--initiative")
+    ctx: typer.Context,
+    initiative: str | None = typer.Option(None, "--initiative"),
+    status: str | None = typer.Option(None, "--status"),
+    active: bool = typer.Option(False, "--active"),
+    all_records: bool = typer.Option(False, "--all"),
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        plans = list_records(workspace, "plan")
+        plans = _sort_records(list_records(workspace, "plan"))
         if initiative is not None:
             plans = [
                 plan
                 for plan in plans
                 if plan.front_matter.get("initiative") == initiative
             ]
-        plans = sorted(plans, key=lambda item: parse_ref_numeric(item.record_id))
+        if sum((1 if status is not None else 0, 1 if active else 0, 1 if all_records else 0)) > 1:
+            raise PlanledgerError(
+                "invalid_options",
+                "Use at most one of --status, --active, or --all.",
+            )
+        if status is not None:
+            resolved_status = _validate_choice(
+                "status", status, {"draft", "accepted", "superseded", "retired"}
+            )
+            plans = [
+                plan for plan in plans if plan.front_matter.get("status") == resolved_status
+            ]
+        elif active:
+            plans = [
+                plan
+                for plan in plans
+                if plan.front_matter.get("status") in ACTIVE_PLAN_STATUSES
+            ]
         payload = [
             {
                 "id": item.record_id,
@@ -912,8 +1753,8 @@ def plan_list(
             for item in plans
         ]
         lines = [
-            f"{item['id']} v{item['version']} {item['initiative']} [{item['status']}]"
-            for item in payload
+            _format_record_line(item)
+            for item in plans
         ]
         return (
             {"kind": "planledger_plan_list", "plans": payload},
@@ -955,6 +1796,11 @@ def plan_accept(
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
         plan = load_record(workspace, "plan", plan_ref)
+        _require_plan_lineage_available(
+            workspace,
+            plan,
+            f"accept plan {plan_ref}",
+        )
         lint = lint_plan(workspace, plan)
         if lint.issues:
             raise PlanledgerError(
@@ -1007,6 +1853,32 @@ def plan_accept(
         )
 
     _run_command(ctx, "plan.accept", execute)
+
+
+@plan_app.command("retire")
+def plan_retire(
+    ctx: typer.Context,
+    plan_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        plan = load_record(workspace, "plan", plan_ref)
+        require_not_terminal(plan, "retire")
+        event = transition_record(
+            workspace,
+            plan,
+            new_status="retired",
+            command=f"planledger plan retire {plan_ref} --reason {reason}",
+            reason=reason,
+        )
+        return (
+            {"kind": "planledger_plan_status", "id": plan_ref, "status": "retired"},
+            f"Retired plan {plan_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "plan.retire", execute)
 
 
 @milestone_app.command("add")
@@ -1119,6 +1991,15 @@ def slice_add(
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
         milestone_record = load_record(workspace, "milestone", milestone)
+        plan_record = load_record(
+            workspace, "plan", str(milestone_record.front_matter.get("plan"))
+        )
+        _require_plan_lineage_available(
+            workspace,
+            plan_record,
+            f"add slice under milestone {milestone}",
+            include_plan=True,
+        )
         slice_id = allocate_id(workspace, "slice")
         timestamp = now_iso()
         front = {
@@ -1158,16 +2039,33 @@ def slice_add(
 
 @slice_app.command("list")
 def slice_list(
-    ctx: typer.Context, initiative: str | None = typer.Option(None, "--initiative")
+    ctx: typer.Context,
+    initiative: str | None = typer.Option(None, "--initiative"),
+    status: str | None = typer.Option(None, "--status"),
+    all_records: bool = typer.Option(False, "--all"),
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        slices = list_records(workspace, "slice")
+        if status is not None and all_records:
+            raise PlanledgerError(
+                "invalid_options",
+                "Use at most one of --status or --all.",
+            )
+        slices = _sort_records(list_records(workspace, "slice"))
         if initiative is not None:
             slices = [
                 item
                 for item in slices
                 if item.front_matter.get("initiative") == initiative
+            ]
+        if status is not None:
+            resolved_status = _validate_choice(
+                "status",
+                status,
+                {"idea", "shaping", "ready-for-execution", "in-execution", "executed", "validated", "cancelled", "obsolete"},
+            )
+            slices = [
+                item for item in slices if item.front_matter.get("status") == resolved_status
             ]
         payload = [
             {
@@ -1212,18 +2110,19 @@ def slice_ready(ctx: typer.Context, slice_ref: str) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
         slice_record = load_record(workspace, "slice", slice_ref)
-        before = {"status": slice_record.front_matter.get("status")}
-        slice_record.front_matter["status"] = "ready-for-execution"
-        update_record_timestamp(slice_record)
-        save_record(slice_record)
-        event = append_event(
+        plan_record = _plan_for_slice(workspace, slice_record)
+        _require_plan_lineage_available(
             workspace,
+            plan_record,
+            f"mark slice {slice_ref} ready",
+            include_plan=True,
+        )
+        event = transition_record(
+            workspace,
+            slice_record,
+            new_status="ready-for-execution",
             command=f"planledger slice ready {slice_ref}",
-            object_type="slice",
-            object_id=slice_ref,
-            event_type="status_changed",
-            before=before,
-            after={"status": "ready-for-execution"},
+            reason="Slice marked ready for taskledger handoff.",
         )
         return (
             {
@@ -1247,21 +2146,16 @@ def slice_done(
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
         slice_record = load_record(workspace, "slice", slice_ref)
-        before = {"status": slice_record.front_matter.get("status")}
-        slice_record.front_matter["status"] = "executed"
-        slice_record.front_matter["execution_status"] = "done"
+        extra: dict[str, Any] = {"execution_status": "done"}
         if evidence:
-            slice_record.front_matter["execution_evidence"] = evidence
-        update_record_timestamp(slice_record)
-        save_record(slice_record)
-        event = append_event(
+            extra["execution_evidence"] = evidence
+        event = transition_record(
             workspace,
+            slice_record,
+            new_status="executed",
             command=f"planledger slice done {slice_ref}",
-            object_type="slice",
-            object_id=slice_ref,
-            event_type="status_changed",
-            before=before,
-            after={"status": "executed", "evidence": evidence or None},
+            reason="Implementation completed.",
+            extra=extra,
         )
         return (
             {"kind": "planledger_slice_status", "id": slice_ref, "status": "executed"},
@@ -1270,6 +2164,99 @@ def slice_done(
         )
 
     _run_command(ctx, "slice.done", execute)
+
+
+@slice_app.command("cancel")
+def slice_cancel(
+    ctx: typer.Context,
+    slice_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        slice_record = load_record(workspace, "slice", slice_ref)
+        event = transition_record(
+            workspace,
+            slice_record,
+            new_status="cancelled",
+            command=f"planledger slice cancel {slice_ref} --reason {reason}",
+            reason=reason,
+        )
+        return (
+            {"kind": "planledger_slice_status", "id": slice_ref, "status": "cancelled"},
+            f"Cancelled slice {slice_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "slice.cancel", execute)
+
+
+@slice_app.command("obsolete")
+def slice_obsolete(
+    ctx: typer.Context,
+    slice_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+    because_goal: str | None = typer.Option(None, "--because-goal"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        slice_record = load_record(workspace, "slice", slice_ref)
+        events = [
+            transition_record(
+                workspace,
+                slice_record,
+                new_status="obsolete",
+                command=f"planledger slice obsolete {slice_ref} --reason {reason}",
+                reason=reason,
+            )
+        ]
+        if because_goal is not None:
+            _ = load_record(workspace, "goal", because_goal)
+            events.append(
+                link_records(
+                    workspace,
+                    slice_record,
+                    "invalidated_by",
+                    because_goal,
+                    command=(
+                        f"planledger slice obsolete {slice_ref} --reason {reason} "
+                        f"--because-goal {because_goal}"
+                    ),
+                )
+            )
+        return (
+            {"kind": "planledger_slice_status", "id": slice_ref, "status": "obsolete"},
+            f"Marked slice {slice_ref} obsolete",
+            events,
+        )
+
+    _run_command(ctx, "slice.obsolete", execute)
+
+
+@slice_app.command("validate")
+def slice_validate(
+    ctx: typer.Context,
+    slice_ref: str,
+    evidence: str = typer.Option(..., "--evidence"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        slice_record = load_record(workspace, "slice", slice_ref)
+        event = transition_record(
+            workspace,
+            slice_record,
+            new_status="validated",
+            command=f"planledger slice validate {slice_ref} --evidence {evidence}",
+            reason="Validation completed.",
+            extra={"validation_evidence": evidence},
+        )
+        return (
+            {"kind": "planledger_slice_status", "id": slice_ref, "status": "validated"},
+            f"Validated slice {slice_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "slice.validate", execute)
 
 
 @decision_app.command("create")
@@ -1565,6 +2552,600 @@ def risk_list(
     _run_command(ctx, "risk.list", execute)
 
 
+@question_app.command("add")
+def question_add(
+    ctx: typer.Context,
+    title: str,
+    goal: str | None = typer.Option(None, "--goal"),
+    initiative: str | None = typer.Option(None, "--initiative"),
+    priority: str = typer.Option("medium", "--priority"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        scope_kind, scope_id = _resolve_scope_from_refs(
+            workspace,
+            goal_ref=goal,
+            initiative_ref=initiative,
+        )
+        question_id = allocate_id(workspace, "question")
+        timestamp = now_iso()
+        front = {
+            "id": question_id,
+            "type": "question",
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "title": title,
+            "status": "open",
+            "priority": _validate_choice("priority", priority, PRIORITY_LEVELS),
+            "answer": None,
+            "answered_at": None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        create_record(workspace, "question", front, QUESTION_TEMPLATE)
+        event = append_event(
+            workspace,
+            command=f"planledger question add {title}",
+            object_type="question",
+            object_id=question_id,
+            event_type="created",
+            after={"scope_kind": scope_kind, "scope_id": scope_id},
+        )
+        return (
+            {"kind": "planledger_question", "id": question_id, "title": title},
+            f"Added question {question_id}: {title}",
+            [event],
+        )
+
+    _run_command(ctx, "question.add", execute)
+
+
+@question_app.command("answer")
+def question_answer(
+    ctx: typer.Context,
+    question_ref: str,
+    answer: str = typer.Option(..., "--answer"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        question = load_record(workspace, "question", question_ref)
+        question.front_matter["status"] = "answered"
+        question.front_matter["answer"] = answer
+        question.front_matter["answered_at"] = now_iso()
+        update_record_timestamp(question)
+        save_record(question)
+        event = append_event(
+            workspace,
+            command=f"planledger question answer {question_ref} --answer {answer}",
+            object_type="question",
+            object_id=question_ref,
+            event_type="question_answered",
+            after={"status": "answered", "answer": answer},
+        )
+        return (
+            {"kind": "planledger_question_status", "id": question_ref, "status": "answered"},
+            f"Answered question {question_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "question.answer", execute)
+
+
+@question_app.command("obsolete")
+def question_obsolete(
+    ctx: typer.Context,
+    question_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        question = load_record(workspace, "question", question_ref)
+        question.front_matter["status"] = "obsolete"
+        question.front_matter["obsolete_reason"] = reason
+        update_record_timestamp(question)
+        save_record(question)
+        event = append_event(
+            workspace,
+            command=f"planledger question obsolete {question_ref} --reason {reason}",
+            object_type="question",
+            object_id=question_ref,
+            event_type="status_changed",
+            after={"status": "obsolete", "reason": reason},
+        )
+        return (
+            {"kind": "planledger_question_status", "id": question_ref, "status": "obsolete"},
+            f"Marked question {question_ref} obsolete",
+            [event],
+        )
+
+    _run_command(ctx, "question.obsolete", execute)
+
+
+@question_app.command("list")
+def question_list(
+    ctx: typer.Context,
+    open_only: bool = typer.Option(False, "--open"),
+    scope: str | None = typer.Option(None, "--scope"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        questions = _sort_records(list_records(workspace, "question"))
+        if open_only:
+            questions = [
+                item for item in questions if item.front_matter.get("status") == "open"
+            ]
+        if scope is not None:
+            scope_kind, scope_id = _resolve_scope_selector(scope)
+            questions = [
+                item
+                for item in questions
+                if item.front_matter.get("scope_kind") == scope_kind
+                and item.front_matter.get("scope_id") == scope_id
+            ]
+        payload = [
+            {
+                "id": item.record_id,
+                "title": item.front_matter.get("title"),
+                "status": item.front_matter.get("status"),
+                "scope_kind": item.front_matter.get("scope_kind"),
+                "scope_id": item.front_matter.get("scope_id"),
+            }
+            for item in questions
+        ]
+        return (
+            {"kind": "planledger_question_list", "questions": payload},
+            "\n".join(_format_record_line(item) for item in questions) or "No questions.",
+            [],
+        )
+
+    _run_command(ctx, "question.list", execute)
+
+
+@question_app.command("show")
+def question_show(ctx: typer.Context, question_ref: str) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        question = load_record(workspace, "question", question_ref)
+        return (
+            {
+                "kind": "planledger_question",
+                "id": question.record_id,
+                "front_matter": question.front_matter,
+                "body": question.body,
+            },
+            _record_human(question),
+            [],
+        )
+
+    _run_command(ctx, "question.show", execute)
+
+
+@assumption_app.command("add")
+def assumption_add(
+    ctx: typer.Context,
+    title: str,
+    goal: str | None = typer.Option(None, "--goal"),
+    initiative: str | None = typer.Option(None, "--initiative"),
+    confidence: str = typer.Option("medium", "--confidence"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        scope_kind, scope_id = _resolve_scope_from_refs(
+            workspace,
+            goal_ref=goal,
+            initiative_ref=initiative,
+        )
+        assumption_id = allocate_id(workspace, "assumption")
+        timestamp = now_iso()
+        front = {
+            "id": assumption_id,
+            "type": "assumption",
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "title": title,
+            "status": "unverified",
+            "confidence": _validate_choice("confidence", confidence, PRIORITY_LEVELS),
+            "evidence": [],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        create_record(workspace, "assumption", front, ASSUMPTION_TEMPLATE)
+        event = append_event(
+            workspace,
+            command=f"planledger assumption add {title}",
+            object_type="assumption",
+            object_id=assumption_id,
+            event_type="created",
+            after={"scope_kind": scope_kind, "scope_id": scope_id},
+        )
+        return (
+            {"kind": "planledger_assumption", "id": assumption_id, "title": title},
+            f"Added assumption {assumption_id}: {title}",
+            [event],
+        )
+
+    _run_command(ctx, "assumption.add", execute)
+
+
+@assumption_app.command("confirm")
+def assumption_confirm(
+    ctx: typer.Context,
+    assumption_ref: str,
+    evidence: str = typer.Option(..., "--evidence"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        assumption = load_record(workspace, "assumption", assumption_ref)
+        evidence_list = list(assumption.front_matter.get("evidence") or [])
+        evidence_list.append(evidence)
+        assumption.front_matter["status"] = "confirmed"
+        assumption.front_matter["evidence"] = evidence_list
+        update_record_timestamp(assumption)
+        save_record(assumption)
+        event = append_event(
+            workspace,
+            command=f"planledger assumption confirm {assumption_ref} --evidence {evidence}",
+            object_type="assumption",
+            object_id=assumption_ref,
+            event_type="assumption_confirmed",
+            after={"status": "confirmed", "evidence": evidence},
+        )
+        return (
+            {
+                "kind": "planledger_assumption_status",
+                "id": assumption_ref,
+                "status": "confirmed",
+            },
+            f"Confirmed assumption {assumption_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "assumption.confirm", execute)
+
+
+@assumption_app.command("invalidate")
+def assumption_invalidate(
+    ctx: typer.Context,
+    assumption_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        assumption = load_record(workspace, "assumption", assumption_ref)
+        assumption.front_matter["status"] = "invalidated"
+        assumption.front_matter["invalidation_reason"] = reason
+        update_record_timestamp(assumption)
+        save_record(assumption)
+        event = append_event(
+            workspace,
+            command=f"planledger assumption invalidate {assumption_ref} --reason {reason}",
+            object_type="assumption",
+            object_id=assumption_ref,
+            event_type="assumption_invalidated",
+            after={"status": "invalidated", "reason": reason},
+        )
+        return (
+            {
+                "kind": "planledger_assumption_status",
+                "id": assumption_ref,
+                "status": "invalidated",
+            },
+            f"Invalidated assumption {assumption_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "assumption.invalidate", execute)
+
+
+@assumption_app.command("list")
+def assumption_list(
+    ctx: typer.Context,
+    open_only: bool = typer.Option(False, "--open"),
+    scope: str | None = typer.Option(None, "--scope"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        assumptions = _sort_records(list_records(workspace, "assumption"))
+        if open_only:
+            assumptions = [
+                item
+                for item in assumptions
+                if item.front_matter.get("status") == "unverified"
+            ]
+        if scope is not None:
+            scope_kind, scope_id = _resolve_scope_selector(scope)
+            assumptions = [
+                item
+                for item in assumptions
+                if item.front_matter.get("scope_kind") == scope_kind
+                and item.front_matter.get("scope_id") == scope_id
+            ]
+        payload = [
+            {
+                "id": item.record_id,
+                "title": item.front_matter.get("title"),
+                "status": item.front_matter.get("status"),
+                "scope_kind": item.front_matter.get("scope_kind"),
+                "scope_id": item.front_matter.get("scope_id"),
+            }
+            for item in assumptions
+        ]
+        return (
+            {"kind": "planledger_assumption_list", "assumptions": payload},
+            "\n".join(_format_record_line(item) for item in assumptions) or "No assumptions.",
+            [],
+        )
+
+    _run_command(ctx, "assumption.list", execute)
+
+
+@assumption_app.command("show")
+def assumption_show(ctx: typer.Context, assumption_ref: str) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        assumption = load_record(workspace, "assumption", assumption_ref)
+        return (
+            {
+                "kind": "planledger_assumption",
+                "id": assumption.record_id,
+                "front_matter": assumption.front_matter,
+                "body": assumption.body,
+            },
+            _record_human(assumption),
+            [],
+        )
+
+    _run_command(ctx, "assumption.show", execute)
+
+
+@constraint_app.command("add")
+def constraint_add(
+    ctx: typer.Context,
+    title: str,
+    scope: str = typer.Option("project", "--scope"),
+    goal: str | None = typer.Option(None, "--goal"),
+    initiative: str | None = typer.Option(None, "--initiative"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        resolved_scope = _validate_choice("scope", scope, {"project", "goal", "initiative"})
+        scope_kind = resolved_scope
+        scope_id: str | None = None
+        if resolved_scope == "goal":
+            if goal is None or initiative is not None:
+                raise PlanledgerError(
+                    "invalid_options",
+                    "Use --goal for goal-scoped constraints.",
+                )
+            _ = load_record(workspace, "goal", goal)
+            scope_id = goal
+        elif resolved_scope == "initiative":
+            if initiative is None or goal is not None:
+                raise PlanledgerError(
+                    "invalid_options",
+                    "Use --initiative for initiative-scoped constraints.",
+                )
+            _ = load_record(workspace, "initiative", initiative)
+            scope_id = initiative
+        constraint_id = allocate_id(workspace, "constraint")
+        timestamp = now_iso()
+        front = {
+            "id": constraint_id,
+            "type": "constraint",
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "title": title,
+            "status": "active",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        create_record(workspace, "constraint", front, CONSTRAINT_TEMPLATE)
+        event = append_event(
+            workspace,
+            command=f"planledger constraint add {title}",
+            object_type="constraint",
+            object_id=constraint_id,
+            event_type="created",
+            after={"scope_kind": scope_kind, "scope_id": scope_id},
+        )
+        return (
+            {"kind": "planledger_constraint", "id": constraint_id, "title": title},
+            f"Added constraint {constraint_id}: {title}",
+            [event],
+        )
+
+    _run_command(ctx, "constraint.add", execute)
+
+
+@constraint_app.command("retire")
+def constraint_retire(
+    ctx: typer.Context,
+    constraint_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        constraint = load_record(workspace, "constraint", constraint_ref)
+        constraint.front_matter["status"] = "retired"
+        constraint.front_matter["close_reason"] = reason
+        constraint.front_matter["closed_at"] = now_iso()
+        update_record_timestamp(constraint)
+        save_record(constraint)
+        event = append_event(
+            workspace,
+            command=f"planledger constraint retire {constraint_ref} --reason {reason}",
+            object_type="constraint",
+            object_id=constraint_ref,
+            event_type="status_changed",
+            after={"status": "retired", "reason": reason},
+        )
+        return (
+            {"kind": "planledger_constraint_status", "id": constraint_ref, "status": "retired"},
+            f"Retired constraint {constraint_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "constraint.retire", execute)
+
+
+@constraint_app.command("list")
+def constraint_list(
+    ctx: typer.Context,
+    active_only: bool = typer.Option(False, "--active"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        constraints = _sort_records(list_records(workspace, "constraint"))
+        if active_only:
+            constraints = [
+                item for item in constraints if item.front_matter.get("status") == "active"
+            ]
+        payload = [
+            {
+                "id": item.record_id,
+                "title": item.front_matter.get("title"),
+                "status": item.front_matter.get("status"),
+                "scope_kind": item.front_matter.get("scope_kind"),
+                "scope_id": item.front_matter.get("scope_id"),
+            }
+            for item in constraints
+        ]
+        return (
+            {"kind": "planledger_constraint_list", "constraints": payload},
+            "\n".join(_format_record_line(item) for item in constraints) or "No constraints.",
+            [],
+        )
+
+    _run_command(ctx, "constraint.list", execute)
+
+
+@constraint_app.command("show")
+def constraint_show(ctx: typer.Context, constraint_ref: str) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        constraint = load_record(workspace, "constraint", constraint_ref)
+        return (
+            {
+                "kind": "planledger_constraint",
+                "id": constraint.record_id,
+                "front_matter": constraint.front_matter,
+                "body": constraint.body,
+            },
+            _record_human(constraint),
+            [],
+        )
+
+    _run_command(ctx, "constraint.show", execute)
+
+
+@review_app.command("add")
+def review_add(
+    ctx: typer.Context,
+    title: str,
+    scope_kind: str = typer.Option(..., "--scope-kind"),
+    scope_id: str = typer.Option(..., "--scope-id"),
+    outcome: str = typer.Option(..., "--outcome"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        resolved_scope_kind = _validate_choice(
+            "scope-kind", scope_kind, {"goal", "initiative", "plan"}
+        )
+        resolved_outcome = _validate_choice(
+            "outcome",
+            outcome,
+            {"fulfilled", "cancelled", "superseded", "needs-followup"},
+        )
+        _ = load_record(workspace, resolved_scope_kind, scope_id)
+        review_id = allocate_id(workspace, "review")
+        timestamp = now_iso()
+        front = {
+            "id": review_id,
+            "type": "review",
+            "scope_kind": resolved_scope_kind,
+            "scope_id": scope_id,
+            "title": title,
+            "status": "completed",
+            "outcome": resolved_outcome,
+            "findings": [],
+            "recommendations": [],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "closed_at": timestamp,
+        }
+        create_record(workspace, "review", front, REVIEW_TEMPLATE)
+        event = append_event(
+            workspace,
+            command=f"planledger review add {title}",
+            object_type="review",
+            object_id=review_id,
+            event_type="review_created",
+            after={"scope_kind": resolved_scope_kind, "scope_id": scope_id},
+        )
+        return (
+            {"kind": "planledger_review", "id": review_id, "title": title},
+            f"Added review {review_id}: {title}",
+            [event],
+        )
+
+    _run_command(ctx, "review.add", execute)
+
+
+@review_app.command("list")
+def review_list(
+    ctx: typer.Context,
+    scope: str | None = typer.Option(None, "--scope"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        reviews = _sort_records(list_records(workspace, "review"))
+        if scope is not None:
+            scope_kind, scope_id = _resolve_scope_selector(scope)
+            reviews = [
+                item
+                for item in reviews
+                if item.front_matter.get("scope_kind") == scope_kind
+                and item.front_matter.get("scope_id") == scope_id
+            ]
+        payload = [
+            {
+                "id": item.record_id,
+                "title": item.front_matter.get("title"),
+                "status": item.front_matter.get("status"),
+                "scope_kind": item.front_matter.get("scope_kind"),
+                "scope_id": item.front_matter.get("scope_id"),
+                "outcome": item.front_matter.get("outcome"),
+            }
+            for item in reviews
+        ]
+        return (
+            {"kind": "planledger_review_list", "reviews": payload},
+            "\n".join(_format_record_line(item) for item in reviews) or "No reviews.",
+            [],
+        )
+
+    _run_command(ctx, "review.list", execute)
+
+
+@review_app.command("show")
+def review_show(ctx: typer.Context, review_ref: str) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        review = load_record(workspace, "review", review_ref)
+        return (
+            {
+                "kind": "planledger_review",
+                "id": review.record_id,
+                "front_matter": review.front_matter,
+                "body": review.body,
+            },
+            _record_human(review),
+            [],
+        )
+
+    _run_command(ctx, "review.show", execute)
+
+
 @app.command("next-action")
 def next_action_cmd(ctx: typer.Context) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
@@ -1807,6 +3388,61 @@ def bundle_apply_cmd(
         return result, message, apply_result.events
 
     _run_command(ctx, "bundle.apply", execute)
+
+
+@evolution_app.command("validate")
+def evolution_validate(
+    ctx: typer.Context,
+    bundle_path: Path = typer.Option(..., "--file", help="Path to evolution bundle JSON"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        _ = _resolve_workspace(ctx)
+        bundle = load_bundle(bundle_path)
+        details = validate_evolution_details(bundle)
+        result = {
+            "kind": "planledger_evolution_validate",
+            "ok": not details.errors,
+            "errors": details.errors,
+            "warnings": details.warnings,
+        }
+        message = (
+            "Evolution bundle validation: pass"
+            if not details.errors
+            else "Evolution bundle validation: fail\n- " + "\n- ".join(details.errors)
+        )
+        return result, message, []
+
+    _run_command(ctx, "evolution.validate", execute)
+
+
+@evolution_app.command("apply")
+def evolution_apply_cmd(
+    ctx: typer.Context,
+    bundle_path: Path = typer.Option(..., "--file", help="Path to evolution bundle JSON"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        bundle = load_bundle(bundle_path)
+        result = apply_evolution_bundle(workspace, bundle, dry_run=dry_run)
+        message = (
+            f"Evolution dry-run: create {len(result.created)}, update {len(result.updated)}, reuse {len(result.reused)}."
+            if dry_run
+            else f"Evolution applied: create {len(result.created)}, update {len(result.updated)}, reuse {len(result.reused)}."
+        )
+        return (
+            {
+                "kind": "planledger_evolution_apply",
+                "dry_run": dry_run,
+                "created": result.created,
+                "updated": result.updated,
+                "reused": result.reused,
+            },
+            message,
+            result.events,
+        )
+
+    _run_command(ctx, "evolution.apply", execute)
 
 
 @adr_app.command("create")

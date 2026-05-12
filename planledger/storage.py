@@ -48,6 +48,7 @@ ID_PREFIXES: dict[str, str] = {
     "constraint": "con",
     "question": "q",
     "binding": "bind",
+    "review": "review",
     "event": "event",
     "run": "run",
 }
@@ -64,6 +65,7 @@ DEFAULT_NEXT_IDS: dict[str, int] = {
     "constraint": 1,
     "question": 1,
     "binding": 1,
+    "review": 1,
     "event": 1,
     "run": 1,
 }
@@ -607,18 +609,18 @@ def active_initiative(workspace: Workspace) -> str | None:
     return None
 
 
-def set_active_initiative(workspace: Workspace, initiative_id: str) -> None:
+def set_active_initiative(workspace: Workspace, initiative_id: str | None) -> None:
     initiatives = list_records(workspace, "initiative")
-    found = False
+    found = initiative_id is None
     for initiative in initiatives:
-        is_active = initiative.record_id == initiative_id
+        is_active = initiative_id is not None and initiative.record_id == initiative_id
         if is_active:
             found = True
         if initiative.front_matter.get("active") != is_active:
             initiative.front_matter["active"] = is_active
             update_record_timestamp(initiative)
             save_record(initiative)
-    if not found:
+    if not found and initiative_id is not None:
         raise PlanledgerError(
             "not_found",
             f"No initiative found for ref {initiative_id}.",

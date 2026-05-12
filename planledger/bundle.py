@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from planledger.errors import PlanledgerError
+from planledger.lifecycle import link_records, transition_record
 from planledger.models import Workspace
 from planledger.storage import (
     allocate_id,
@@ -50,6 +51,7 @@ ALLOWED_TOP_LEVEL_FIELDS = {
 ALLOWED_DECISION_STATUSES = {"open", "accepted", "rejected"}
 ALLOWED_OPTION_STATUSES = {"candidate", "accepted", "rejected"}
 ALLOWED_RISK_LEVELS = {"low", "medium", "high"}
+EVOLUTION_SCHEMA = "planledger.evolution_bundle.v1"
 _PREVIEW_NEW_GOAL_SCOPE = "__preview_new_goal__"
 
 
@@ -983,3 +985,354 @@ def _preview_bundle(
     result.created.insert(0, {"kind": "run", "title": "preview"})
 
     return result
+
+
+def validate_evolution_details(bundle: dict[str, Any]) -> BundleValidationDetails:
+    details = BundleValidationDetails()
+    schema = bundle.get("schema")
+    if schema != EVOLUTION_SCHEMA:
+        details.errors.append(
+            f"Missing or invalid schema: expected {EVOLUTION_SCHEMA!r}, got {schema!r}."
+        )
+    request_data = bundle.get("request")
+    if not isinstance(request_data, dict):
+        details.errors.append("Missing or invalid 'request' section.")
+    elif not _is_non_empty_string(request_data.get("title")):
+        details.errors.append("request.title is required.")
+
+    allowed_actions = {
+        "goal": {"complete", "cancel", "park"},
+        "initiative": {"complete", "cancel", "park"},
+        "plan": {"retire"},
+        "slice": {"cancel", "obsolete", "validate"},
+    }
+    updates = bundle.get("updates", [])
+    if not isinstance(updates, list):
+        details.errors.append("'updates' must be a list.")
+    else:
+        for index, update in enumerate(updates):
+            if not isinstance(update, dict):
+                details.errors.append(f"Update {index} must be an object.")
+                continue
+            kind = str(update.get("kind", ""))
+            action = str(update.get("action", ""))
+            if kind not in allowed_actions:
+                details.errors.append(f"Update {index} has invalid kind {kind!r}.")
+                continue
+            if not _is_non_empty_string(update.get("id")):
+                details.errors.append(f"Update {index} missing id.")
+            if action not in allowed_actions[kind]:
+                details.errors.append(
+                    f"Update {index} has invalid action {action!r} for {kind}."
+                )
+            if action == "validate":
+                evidence = update.get("evidence")
+                if not isinstance(evidence, list) or not evidence:
+                    details.errors.append(
+                        f"Update {index} requires non-empty evidence for validate."
+                    )
+            elif not _is_non_empty_string(update.get("reason")):
+                details.errors.append(f"Update {index} requires reason.")
+
+    creates = bundle.get("creates", {})
+    if creates is not None and not isinstance(creates, dict):
+        details.errors.append("'creates' must be an object when present.")
+    elif isinstance(creates, dict):
+        for field_name in ("questions", "assumptions", "constraints", "reviews"):
+            value = creates.get(field_name, [])
+            if value is not None and not isinstance(value, list):
+                details.errors.append(f"creates.{field_name} must be a list.")
+
+    if not updates and not any((bundle.get("creates") or {}).values()):
+        details.errors.append("Evolution bundle must include updates or creates.")
+    return details
+
+
+def _find_scoped_existing(
+    workspace: Workspace,
+    kind: str,
+    title: str,
+    *,
+    scope_kind: str,
+    scope_id: str | None,
+) -> str | None:
+    for record in list_records(workspace, kind):
+        if record.front_matter.get("title") != title:
+            continue
+        if record.front_matter.get("scope_kind") != scope_kind:
+            continue
+        if record.front_matter.get("scope_id") != scope_id:
+            continue
+        return record.record_id
+    return None
+
+
+def _preview_evolution_bundle(
+    workspace: Workspace, bundle: dict[str, Any]
+) -> BundleApplyResult:
+    result = BundleApplyResult()
+    for update in bundle.get("updates", []):
+        if not isinstance(update, dict):
+            continue
+        result.updated.append(
+            {
+                "kind": update.get("kind"),
+                "id": update.get("id"),
+                "action": update.get("action"),
+            }
+        )
+    creates = bundle.get("creates", {})
+    if isinstance(creates, dict):
+        for field_name, kind in (
+            ("questions", "question"),
+            ("assumptions", "assumption"),
+            ("constraints", "constraint"),
+            ("reviews", "review"),
+        ):
+            for item in creates.get(field_name, []):
+                if not isinstance(item, dict):
+                    continue
+                existing = _find_scoped_existing(
+                    workspace,
+                    kind,
+                    str(item.get("title", "")),
+                    scope_kind=str(item.get("scope_kind", "project")),
+                    scope_id=(
+                        str(item.get("scope_id"))
+                        if item.get("scope_id") is not None
+                        else None
+                    ),
+                )
+                if existing:
+                    result.reused.append({"kind": kind, "id": existing})
+                else:
+                    result.created.append({"kind": kind, "title": item.get("title", "")})
+    return result
+
+
+def _apply_evolution_update(ctx: _ApplyCtx, update: dict[str, Any]) -> None:
+    workspace = ctx.workspace
+    kind = str(update["kind"])
+    record_id = str(update["id"])
+    action = str(update["action"])
+    record = load_record(workspace, kind, record_id)
+    reason = str(update.get("reason", ""))
+    if kind == "goal":
+        if action == "complete":
+            transition_record(
+                workspace,
+                record,
+                new_status="fulfilled",
+                command="planledger evolution apply",
+                reason=reason,
+                extra={"evidence": list(update.get("evidence") or [])},
+            )
+        elif action == "cancel":
+            transition_record(
+                workspace,
+                record,
+                new_status="cancelled",
+                command="planledger evolution apply",
+                reason=reason,
+            )
+        else:
+            transition_record(
+                workspace,
+                record,
+                new_status="parked",
+                command="planledger evolution apply",
+                reason=reason,
+                extra={"park_reason": reason},
+            )
+        for related_goal in update.get("related_goals", []) or []:
+            if isinstance(related_goal, str):
+                link_records(
+                    workspace,
+                    record,
+                    "related_goals",
+                    related_goal,
+                    command="planledger evolution apply",
+                )
+    elif kind == "initiative":
+        mapping = {"complete": "fulfilled", "cancel": "cancelled", "park": "parked"}
+        extra = {"park_reason": reason} if action == "park" else None
+        transition_record(
+            workspace,
+            record,
+            new_status=mapping[action],
+            command="planledger evolution apply",
+            reason=reason,
+            extra=extra,
+        )
+    elif kind == "plan":
+        transition_record(
+            workspace,
+            record,
+            new_status="retired",
+            command="planledger evolution apply",
+            reason=reason,
+        )
+    elif kind == "slice":
+        if action == "validate":
+            transition_record(
+                workspace,
+                record,
+                new_status="validated",
+                command="planledger evolution apply",
+                reason="Validation completed.",
+                extra={"validation_evidence": list(update.get("evidence") or [])},
+            )
+        else:
+            transition_record(
+                workspace,
+                record,
+                new_status="cancelled" if action == "cancel" else "obsolete",
+                command="planledger evolution apply",
+                reason=reason,
+            )
+    ctx.result.updated.append({"kind": kind, "id": record_id, "action": action})
+
+
+def _create_evolution_records(ctx: _ApplyCtx, creates: dict[str, Any]) -> None:
+    workspace = ctx.workspace
+    for field_name, kind in (
+        ("questions", "question"),
+        ("assumptions", "assumption"),
+        ("constraints", "constraint"),
+        ("reviews", "review"),
+    ):
+        for item in creates.get(field_name, []) or []:
+            if not isinstance(item, dict):
+                continue
+            scope_kind = str(item.get("scope_kind", "project"))
+            scope_id = (
+                str(item.get("scope_id")) if item.get("scope_id") is not None else None
+            )
+            title = str(item.get("title", ""))
+            existing = _find_scoped_existing(
+                workspace,
+                kind,
+                title,
+                scope_kind=scope_kind,
+                scope_id=scope_id,
+            )
+            if existing is not None:
+                ctx.result.reused.append({"kind": kind, "id": existing})
+                continue
+            record_id = allocate_id(workspace, kind)
+            front: dict[str, Any] = {
+                "id": record_id,
+                "type": kind,
+                "scope_kind": scope_kind,
+                "scope_id": scope_id,
+                "title": title,
+                "created_at": ctx.timestamp,
+                "updated_at": ctx.timestamp,
+            }
+            body = ""
+            if kind == "question":
+                front.update(
+                    {
+                        "status": "open",
+                        "priority": item.get("priority", "medium"),
+                        "answer": None,
+                        "answered_at": None,
+                    }
+                )
+                body = "# Question\n"
+            elif kind == "assumption":
+                front.update(
+                    {
+                        "status": "unverified",
+                        "confidence": item.get("confidence", "medium"),
+                        "evidence": list(item.get("evidence") or []),
+                    }
+                )
+                body = "# Assumption\n"
+            elif kind == "constraint":
+                front.update({"status": "active"})
+                body = "# Constraint\n"
+            elif kind == "review":
+                front.update(
+                    {
+                        "status": "completed",
+                        "outcome": item.get("outcome", "needs-followup"),
+                        "findings": list(item.get("findings") or []),
+                        "recommendations": list(item.get("recommendations") or []),
+                        "closed_at": ctx.timestamp,
+                    }
+                )
+                body = "# Review\n"
+            create_record(workspace, kind, front, body)
+            ctx.result.created.append({"kind": kind, "id": record_id})
+
+
+def apply_evolution_bundle(
+    workspace: Workspace,
+    bundle: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    actor: str = "agent",
+    provenance: str = "agent-generated",
+) -> BundleApplyResult:
+    details = validate_evolution_details(bundle)
+    if details.errors:
+        raise PlanledgerError(
+            "invalid_bundle",
+            "Bundle validation failed.",
+            remediation=details.errors,
+        )
+    if dry_run:
+        return _preview_evolution_bundle(workspace, bundle)
+    ctx = _ApplyCtx(
+        workspace=workspace,
+        timestamp=now_iso(),
+        actor=actor,
+        provenance=provenance,
+    )
+    ctx.run_id = allocate_id(workspace, "run")
+    run_front: dict[str, Any] = {
+        "id": ctx.run_id,
+        "type": "run",
+        "actor": actor,
+        "harness": None,
+        "skill_version": None,
+        "user_request": bundle.get("request", {}).get("title", ""),
+        "planning_mode": bundle.get("request", {}).get("planning_mode", "repair"),
+        "provenance": provenance,
+        "source_context": [],
+        "created_records": [],
+        "created_at": ctx.timestamp,
+        "updated_at": ctx.timestamp,
+    }
+    create_record(workspace, "run", run_front, "")
+    ctx.result.created.append({"kind": "run", "id": ctx.run_id})
+    for update in bundle.get("updates", []):
+        if isinstance(update, dict):
+            _apply_evolution_update(ctx, update)
+    creates = bundle.get("creates", {})
+    if isinstance(creates, dict):
+        _create_evolution_records(ctx, creates)
+    run_record = load_record(workspace, "run", ctx.run_id)
+    run_record.front_matter["created_records"] = [
+        item["id"] for item in ctx.result.created if "id" in item
+    ]
+    save_record(run_record)
+    evt = append_event(
+        workspace,
+        command="planledger evolution apply",
+        object_type="run",
+        object_id=ctx.run_id,
+        event_type="evolution_applied",
+        after={
+            "created": len(ctx.result.created),
+            "updated": len(ctx.result.updated),
+            "reused": len(ctx.result.reused),
+        },
+        actor=actor,
+        source_run=ctx.run_id,
+        provenance=ctx.provenance,
+        correlation_id=ctx.run_id,
+    )
+    ctx.result.events.append(evt)
+    return ctx.result

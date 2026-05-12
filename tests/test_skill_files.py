@@ -62,3 +62,22 @@ def test_skill_uses_returned_plan_id_for_taskledger():
     assert "Never hardcode `plan-0001`" in content
     assert "taskledger detect" in content
     assert "push-plan <result.plan_id> --create-tasks" in content
+
+
+def test_skill_mentions_evolving_goal_lifecycle():
+    content = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text()
+    assert "exploring" in content
+    assert "fulfilled" in content
+    assert "cancelled" in content
+
+
+def test_skill_prevents_resurrecting_cancelled_goals():
+    content = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text()
+    assert "Do not resurrect cancelled goals" in content
+    assert "Never treat `cancelled`, `fulfilled`, or `superseded` goals as pending work." in content
+
+
+def test_skill_blocks_taskledger_handoff_during_shaping():
+    content = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text()
+    assert "Do not create taskledger tasks." in content
+    assert "Do not push to taskledger during shaping." in content

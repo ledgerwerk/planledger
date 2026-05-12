@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from planledger.lifecycle import EXECUTION_BLOCKING_SLICE_STATUSES, blocks_execution, is_terminal
 from planledger.errors import PlanledgerError
 from planledger.models import Workspace
 from planledger.storage import (
@@ -156,6 +157,33 @@ def _update_slice_binding(
     update_record_timestamp(slice_record)
 
 
+def _require_handoff_parent(parent: Any, target_ref: str) -> None:
+    status_value = parent.front_matter.get("status")
+    status = str(status_value) if status_value is not None else None
+    if not blocks_execution(parent.kind, status):
+        return
+    error_kind = "terminal_parent" if is_terminal(parent.kind, status) else "inactive_parent"
+    raise PlanledgerError(
+        error_kind,
+        f"Cannot push {target_ref} because parent {parent.kind} {parent.record_id} is {status}.",
+        remediation=[
+            "Use planledger view to inspect current goals.",
+            "Create or activate a non-terminal goal before taskledger handoff.",
+        ],
+    )
+
+
+def _require_handoff_lineage(workspace: Workspace, plan_record: Any, target_ref: str) -> None:
+    initiative_id = str(plan_record.front_matter.get("initiative"))
+    initiative = load_record(workspace, "initiative", initiative_id)
+    goal_ref = plan_record.front_matter.get("goal") or initiative.front_matter.get("goal")
+    if goal_ref is not None:
+        goal = load_record(workspace, "goal", str(goal_ref))
+        _require_handoff_parent(goal, target_ref)
+    _require_handoff_parent(initiative, target_ref)
+    _require_handoff_parent(plan_record, target_ref)
+
+
 def _create_binding(
     workspace: Workspace,
     slice_record: Any,
@@ -247,6 +275,8 @@ def push_slice(
             f"Slice {slice_id} must be ready-for-execution before push.",
             remediation=[f"Run: planledger slice ready {slice_id}"],
         )
+    plan_record = load_record(workspace, "plan", str(slice_record.front_matter.get("plan")))
+    _require_handoff_lineage(workspace, plan_record, slice_id)
 
     title = str(slice_record.front_matter.get("title", "Untitled slice"))
     slug = slugify(title)
@@ -345,19 +375,10 @@ def push_plan(
             ],
         )
     plan_record = load_record(workspace, "plan", plan_id)
+    _require_handoff_lineage(workspace, plan_record, plan_id)
     initiative_id = str(plan_record.front_matter.get("initiative"))
 
     all_slices = list_records(workspace, "slice")
-    plan_slices = [
-        s
-        for s in all_slices
-        if s.front_matter.get("plan") == plan_id
-        and (
-            s.front_matter.get("status") == "ready-for-execution"
-            or s.front_matter.get("ready_for_taskledger") is True
-        )
-    ]
-
     accepted_decisions = [
         d
         for d in list_records(workspace, "decision")
@@ -375,6 +396,24 @@ def push_plan(
     created: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    plan_slices: list[Any] = []
+
+    for slice_record in all_slices:
+        if slice_record.front_matter.get("plan") != plan_id:
+            continue
+        status = str(slice_record.front_matter.get("status", ""))
+        if status in EXECUTION_BLOCKING_SLICE_STATUSES:
+            skipped.append(
+                {
+                    "slice": slice_record.record_id,
+                    "reason": status,
+                }
+            )
+            continue
+        if status == "ready-for-execution" or slice_record.front_matter.get(
+            "ready_for_taskledger"
+        ) is True:
+            plan_slices.append(slice_record)
 
     for slice_record in plan_slices:
         bindings = list(slice_record.front_matter.get("taskledger_bindings") or [])

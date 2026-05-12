@@ -13,12 +13,13 @@ cp -R ./skills/planledger ~/.agents/skills/planledger
 
 After installation, ask the harness or agent to load the `planledger` skill before planning or taskledger handoff work.
 
-The skill teaches the agent how to use planledger as a hidden durable planning control plane: export context, validate and apply plan bundles, push work to taskledger, manage architectural decisions, and backfill existing projects.
+The skill teaches the agent how to use planledger as a hidden durable project-intent ledger: inspect active, exploring, and closed goals; record questions, assumptions, and lifecycle changes; validate and apply planning bundles; use evolution bundles for repairs and direction changes; and push work to taskledger only when slices are ready and handoff was requested.
 
 ## What this skill provides
 
-- Default harness workflow for planning features
+- Default harness workflow for shaping, lifecycle updates, planning, handoff, and repair
 - Planning mode guidance (skip, light, full, repair)
 - Required bundle properties for `planledger.plan_bundle.v1`
+- Evolution flow guidance for lifecycle repairs and direction changes
 - Human interaction rules to avoid unnecessary questions
-- Command reference for context export, bundle apply, taskledger push-plan, ADR, and backfill
+- Command reference for context export, bundle apply, evolution apply, taskledger push-plan, ADR, and backfill
