@@ -121,3 +121,40 @@ def test_apply_invalid_bundle_raises(workspace):
     bundle = {"schema": "wrong"}
     with pytest.raises(Exception, match="invalid_bundle"):
         apply_bundle(workspace, bundle)
+
+
+def test_apply_creates_language_records(workspace):
+    bundle = {
+        "schema": "planledger.plan_bundle.v1",
+        "request": {"title": "Add language"},
+        "plan": {"title": "Language plan", "objectives": ["Track project terms"]},
+        "language": {
+            "areas": [{"title": "Ordering", "paths": ["src/ordering"]}],
+            "terms": [
+                {
+                    "canonical": "Order",
+                    "area": "Ordering",
+                    "definition": "A customer request for goods or services.",
+                }
+            ],
+            "ambiguities": [
+                {
+                    "phrase": "account",
+                    "area": "Ordering",
+                    "meanings": ["Customer", "User"],
+                }
+            ],
+        },
+    }
+
+    apply_bundle(workspace, bundle)
+
+    assert [record.front_matter.get("title") for record in list_records(workspace, "language_area")] == [
+        "Ordering"
+    ]
+    assert [record.front_matter.get("canonical") for record in list_records(workspace, "language_term")] == [
+        "Order"
+    ]
+    assert [record.front_matter.get("phrase") for record in list_records(workspace, "language_ambiguity")] == [
+        "account"
+    ]

@@ -26,10 +26,14 @@ RECORD_DIRS: dict[str, str] = {
     "slice": "slices",
     "decision": "decisions",
     "option": "options",
+    "language_area": "language_areas",
+    "language_term": "language_terms",
+    "language_ambiguity": "language_ambiguities",
     "assumption": "assumptions",
     "risk": "risks",
     "constraint": "constraints",
     "question": "questions",
+    "challenge_session": "challenge_sessions",
     "binding": "bindings",
     "review": "reviews",
     "event": "events",
@@ -43,10 +47,14 @@ ID_PREFIXES: dict[str, str] = {
     "slice": "slice",
     "decision": "dec",
     "option": "opt",
+    "language_area": "area",
+    "language_term": "term",
+    "language_ambiguity": "amb",
     "assumption": "asm",
     "risk": "risk",
     "constraint": "con",
     "question": "q",
+    "challenge_session": "challenge",
     "binding": "bind",
     "review": "review",
     "event": "event",
@@ -60,10 +68,14 @@ DEFAULT_NEXT_IDS: dict[str, int] = {
     "slice": 1,
     "decision": 1,
     "option": 1,
+    "language_area": 1,
+    "language_term": 1,
+    "language_ambiguity": 1,
     "assumption": 1,
     "risk": 1,
     "constraint": 1,
     "question": 1,
+    "challenge_session": 1,
     "binding": 1,
     "review": 1,
     "event": 1,
@@ -161,7 +173,21 @@ OPTION_TEMPLATE = """# Option
 
 ## Implementation notes
 """
-ADR_TEMPLATE = "# Architectural Decision\n\n## Context\n\n## Decision\n\n## Alternatives considered\n\n## Consequences\n\n## Follow-up\n\n## Evidence\n"
+RATIONALE_TEMPLATE = (
+    "# Rationale\n\n"
+    "<Summarize the non-obvious trade-off in one paragraph first.>\n\n"
+    "## Evidence\n"
+)
+ADR_TEMPLATE = RATIONALE_TEMPLATE
+LANGUAGE_AREA_TEMPLATE = "# Language Area\n\n## Summary\n\n## Notes\n"
+LANGUAGE_TERM_TEMPLATE = "# Language Term\n\n## Example usage\n\n## Notes\n"
+LANGUAGE_AMBIGUITY_TEMPLATE = "# Language Ambiguity\n\n## Meanings\n\n## Resolution\n"
+CHALLENGE_SESSION_TEMPLATE = (
+    "# Challenge Session\n\n## Goal\n\n## Questions\n\n## Findings\n"
+)
+DEFAULT_LANGUAGE_AREA_TITLE = "Project"
+RATIONALE_DECISION_TYPES = {"rationale", "architecture"}
+INFERRED_PROVENANCE = {"inferred", "agent-generated"}
 
 
 @dataclass
@@ -171,6 +197,101 @@ class LintResult:
     @property
     def ok(self) -> bool:
         return not self.issues
+
+
+def _front_matter_dict(record_or_front: Record | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(record_or_front, Record):
+        return record_or_front.front_matter
+    return record_or_front
+
+
+def decision_type(record_or_front: Record | dict[str, Any]) -> str:
+    front = _front_matter_dict(record_or_front)
+    value = front.get("decision_type")
+    if value is None:
+        return ""
+    return str(value).strip().lower()
+
+
+def is_rationale_decision(record_or_front: Record | dict[str, Any]) -> bool:
+    return decision_type(record_or_front) in RATIONALE_DECISION_TYPES
+
+
+def list_rationale_records(
+    workspace: Workspace,
+    *,
+    initiative: str | None = None,
+) -> list[Record]:
+    records = [
+        record
+        for record in list_records(workspace, "decision")
+        if is_rationale_decision(record)
+    ]
+    if initiative is not None:
+        records = [
+            record
+            for record in records
+            if str(record.front_matter.get("initiative") or "") == initiative
+        ]
+    return records
+
+
+def normalize_language_canonical(value: str) -> str:
+    return " ".join(value.strip().split()).casefold()
+
+
+def default_language_area(workspace: Workspace) -> Record | None:
+    areas = list_records(workspace, "language_area")
+    for area in areas:
+        if area.front_matter.get("is_default") is True:
+            return area
+    if len(areas) == 1:
+        return areas[0]
+    for area in areas:
+        title = str(area.front_matter.get("title") or "").strip()
+        if title == DEFAULT_LANGUAGE_AREA_TITLE:
+            return area
+    return None
+
+
+def ensure_default_language_area(workspace: Workspace) -> Record:
+    existing = default_language_area(workspace)
+    if existing is not None:
+        return existing
+    area_id = allocate_id(workspace, "language_area")
+    timestamp = now_iso()
+    front = {
+        "id": area_id,
+        "type": "language_area",
+        "title": DEFAULT_LANGUAGE_AREA_TITLE,
+        "status": "active",
+        "paths": [],
+        "summary": "Repository-wide project language.",
+        "parent_area": None,
+        "is_default": True,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "provenance": "human",
+    }
+    return create_record(workspace, "language_area", front, LANGUAGE_AREA_TEMPLATE)
+
+
+def find_language_term(
+    workspace: Workspace,
+    *,
+    area: str,
+    canonical: str,
+) -> Record | None:
+    needle = normalize_language_canonical(canonical)
+    for record in list_records(workspace, "language_term"):
+        if str(record.front_matter.get("area") or "") != area:
+            continue
+        current = normalize_language_canonical(
+            str(record.front_matter.get("canonical") or "")
+        )
+        if current == needle:
+            return record
+    return None
 
 
 def now_iso() -> str:
@@ -766,7 +887,11 @@ def record_counts(workspace: Workspace) -> dict[str, int]:
             "slice",
             "decision",
             "option",
+            "language_area",
+            "language_term",
+            "language_ambiguity",
             "risk",
+            "challenge_session",
             "binding",
         )
     }
@@ -842,6 +967,35 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
         if dec_ref and dec_ref not in all_records["decision"]:
             issues.append(
                 f"Option {opt_record.record_id} references missing decision {dec_ref}"
+            )
+
+    for term_record in all_records["language_term"].values():
+        area_ref = term_record.front_matter.get("area")
+        if area_ref and area_ref not in all_records["language_area"]:
+            issues.append(
+                f"Language term {term_record.record_id} references missing area {area_ref}"
+            )
+
+    for ambiguity_record in all_records["language_ambiguity"].values():
+        area_ref = ambiguity_record.front_matter.get("area")
+        if area_ref and area_ref not in all_records["language_area"]:
+            issues.append(
+                "Language ambiguity "
+                f"{ambiguity_record.record_id} references missing area {area_ref}"
+            )
+        question_ref = ambiguity_record.front_matter.get("question")
+        if question_ref and question_ref not in all_records["question"]:
+            issues.append(
+                "Language ambiguity "
+                f"{ambiguity_record.record_id} references missing question {question_ref}"
+            )
+
+    for challenge_record in all_records["challenge_session"].values():
+        plan_ref = challenge_record.front_matter.get("plan")
+        if plan_ref and plan_ref not in all_records["plan"]:
+            issues.append(
+                "Challenge session "
+                f"{challenge_record.record_id} references missing plan {plan_ref}"
             )
 
     return {

@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from planledger.errors import PlanledgerError
+from planledger.language import (
+    add_language_ambiguity,
+    add_language_term,
+    create_language_area,
+)
 from planledger.lifecycle import link_records, transition_record
 from planledger.models import Workspace
 from planledger.storage import (
@@ -47,6 +52,7 @@ ALLOWED_TOP_LEVEL_FIELDS = {
     "milestones",
     "decisions",
     "risks",
+    "language",
 }
 ALLOWED_DECISION_STATUSES = {"open", "accepted", "rejected"}
 ALLOWED_OPTION_STATUSES = {"candidate", "accepted", "rejected"}
@@ -368,6 +374,40 @@ def validate_bundle_details(
                     likelihood=likelihood,
                     mitigation=str(risk.get("mitigation", "")),
                 )
+
+    language = bundle.get("language")
+    if language is not None:
+        if not isinstance(language, dict):
+            details.errors.append("'language' must be an object.")
+        else:
+            for field_name in ("areas", "terms", "ambiguities"):
+                value = language.get(field_name, [])
+                if value is None:
+                    value = []
+                if not isinstance(value, list):
+                    details.errors.append(f"language.{field_name} must be a list.")
+            for i, area in enumerate(language.get("areas", [])):
+                if not isinstance(area, dict):
+                    details.errors.append(f"language.areas[{i}] must be an object.")
+                    continue
+                if not _is_non_empty_string(area.get("title")):
+                    details.errors.append(f"language.areas[{i}] missing title.")
+            for i, term in enumerate(language.get("terms", [])):
+                if not isinstance(term, dict):
+                    details.errors.append(f"language.terms[{i}] must be an object.")
+                    continue
+                if not _is_non_empty_string(term.get("canonical")):
+                    details.errors.append(f"language.terms[{i}] missing canonical.")
+                if not _is_non_empty_string(term.get("definition")):
+                    details.errors.append(f"language.terms[{i}] missing definition.")
+            for i, ambiguity in enumerate(language.get("ambiguities", [])):
+                if not isinstance(ambiguity, dict):
+                    details.errors.append(
+                        f"language.ambiguities[{i}] must be an object."
+                    )
+                    continue
+                if not _is_non_empty_string(ambiguity.get("phrase")):
+                    details.errors.append(f"language.ambiguities[{i}] missing phrase.")
 
     return details
 
@@ -771,6 +811,72 @@ def _create_risks(
     return created_ids
 
 
+def _create_language_records(
+    ctx: _ApplyCtx,
+    language_data: dict[str, Any],
+) -> list[str]:
+    created_ids: list[str] = []
+    if not isinstance(language_data, dict):
+        return created_ids
+    area_ids_by_title: dict[str, str] = {}
+    for area_data in language_data.get("areas", []):
+        if not isinstance(area_data, dict):
+            continue
+        record = create_language_area(
+            ctx.workspace,
+            title=str(area_data.get("title", "")),
+            paths=list(area_data.get("paths", []) or []),
+            summary=str(area_data.get("summary", "") or ""),
+            provenance=ctx.provenance,
+            status=str(area_data.get("status", "active") or "active"),
+            is_default=area_data.get("is_default") is True,
+        )
+        area_ids_by_title[str(record.front_matter.get("title", ""))] = record.record_id
+        ctx.result.created.append({"kind": "language_area", "id": record.record_id})
+        created_ids.append(record.record_id)
+    for term_data in language_data.get("terms", []):
+        if not isinstance(term_data, dict):
+            continue
+        requested_area = term_data.get("area")
+        resolved_area = None
+        if isinstance(requested_area, str) and requested_area:
+            resolved_area = area_ids_by_title.get(requested_area, requested_area)
+        record, created = add_language_term(
+            ctx.workspace,
+            canonical=str(term_data.get("canonical", "")),
+            area=resolved_area,
+            definition=str(term_data.get("definition", "")),
+            avoid=list(term_data.get("avoid", []) or []),
+            aliases=list(term_data.get("aliases", []) or []),
+            provenance=str(term_data.get("provenance", ctx.provenance)),
+            confidence=str(term_data.get("confidence", "high") or "high"),
+            evidence=list(term_data.get("evidence", []) or []),
+            status=str(term_data.get("status", "active") or "active"),
+        )
+        if created:
+            ctx.result.created.append({"kind": "language_term", "id": record.record_id})
+            created_ids.append(record.record_id)
+        else:
+            ctx.result.reused.append({"kind": "language_term", "id": record.record_id})
+    for ambiguity_data in language_data.get("ambiguities", []):
+        if not isinstance(ambiguity_data, dict):
+            continue
+        requested_area = ambiguity_data.get("area")
+        resolved_area = None
+        if isinstance(requested_area, str) and requested_area:
+            resolved_area = area_ids_by_title.get(requested_area, requested_area)
+        record = add_language_ambiguity(
+            ctx.workspace,
+            phrase=str(ambiguity_data.get("phrase", "")),
+            area=resolved_area,
+            meanings=list(ambiguity_data.get("meanings", []) or []),
+            question=ambiguity_data.get("question"),
+        )
+        ctx.result.created.append({"kind": "language_ambiguity", "id": record.record_id})
+        created_ids.append(record.record_id)
+    return created_ids
+
+
 def apply_bundle(
     workspace: Workspace,
     bundle: dict[str, Any],
@@ -831,7 +937,10 @@ def apply_bundle(
         plan_id,
     )
     risk_ids = _create_risks(ctx, bundle.get("risks", []), init_id)
-    all_created = [r["id"] for r in ctx.result.created] + ms_ids + dec_ids + risk_ids
+    language_ids = _create_language_records(ctx, bundle.get("language", {}))
+    all_created = (
+        [r["id"] for r in ctx.result.created] + ms_ids + dec_ids + risk_ids + language_ids
+    )
     if all_created:
         run_record = load_record(workspace, "run", ctx.run_id)
         run_record.front_matter["created_records"] = all_created

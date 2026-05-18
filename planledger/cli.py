@@ -9,6 +9,12 @@ from typing import Any
 import typer
 
 from planledger import __version__
+from planledger.baseline import (
+    apply_baseline,
+    load_baseline_file,
+    review_baseline,
+    validate_baseline_details,
+)
 from planledger.backfill import backfill_apply, backfill_review
 from planledger.bundle import (
     apply_bundle,
@@ -17,8 +23,28 @@ from planledger.bundle import (
     validate_bundle_details,
     validate_evolution_details,
 )
+from planledger.challenge import (
+    active_challenge_sessions,
+    challenge_status_for_plan,
+    load_challenge_session,
+    questions_for_session,
+)
 from planledger.context import export_context
+from planledger.discovery import discover_repo
 from planledger.errors import PlanledgerError
+from planledger.implementation import (
+    apply_implementation_report,
+    load_implementation_report,
+    validate_implementation_report,
+)
+from planledger.language import (
+    add_language_ambiguity,
+    add_language_term,
+    create_language_area,
+    deprecate_language_term,
+    resolve_language_ambiguity,
+    update_language_term,
+)
 from planledger.lifecycle import (
     ACTIVE_GOAL_STATUSES,
     EXECUTION_BLOCKING_GOAL_STATUSES,
@@ -35,18 +61,21 @@ from planledger.lifecycle import (
 from planledger.models import AppContext, Record
 from planledger.next_action import suggest_next_action
 from planledger.storage import (
-    ADR_TEMPLATE,
+    CHALLENGE_SESSION_TEMPLATE,
     DECISION_TEMPLATE,
     OPTION_TEMPLATE,
+    RATIONALE_TEMPLATE,
     active_initiative,
     allocate_id,
     append_event,
     create_record,
     doctor,
     initialize_project,
+    is_rationale_decision,
     latest_plan_for_initiative,
     lint_plan,
     list_records,
+    list_rationale_records,
     load_record,
     load_workspace,
     now_iso,
@@ -86,6 +115,17 @@ taskledger_app = typer.Typer(help="taskledger integration")
 bundle_app = typer.Typer(help="Bundle import")
 evolution_app = typer.Typer(help="Evolution bundle commands")
 context_app = typer.Typer(help="Context export")
+snapshot_app = typer.Typer(help="Snapshot export")
+discover_app = typer.Typer(help="Repository discovery")
+baseline_app = typer.Typer(help="Baseline commands")
+challenge_app = typer.Typer(help="Challenge session commands")
+implementation_app = typer.Typer(help="Implementation closeout commands")
+implementation_report_app = typer.Typer(help="Implementation report commands")
+language_app = typer.Typer(help="Project language commands")
+language_area_app = typer.Typer(help="Language area commands")
+language_term_app = typer.Typer(help="Language term commands")
+language_ambiguity_app = typer.Typer(help="Language ambiguity commands")
+rationale_app = typer.Typer(help="Rationale commands")
 adr_app = typer.Typer(help="Architectural Decision Records")
 backfill_app = typer.Typer(help="Existing project backfill")
 app.add_typer(goal_app, name="goal")
@@ -104,8 +144,19 @@ app.add_typer(taskledger_app, name="taskledger")
 app.add_typer(bundle_app, name="bundle")
 app.add_typer(evolution_app, name="evolution")
 app.add_typer(context_app, name="context")
+app.add_typer(snapshot_app, name="snapshot")
+app.add_typer(discover_app, name="discover")
+app.add_typer(baseline_app, name="baseline")
+app.add_typer(challenge_app, name="challenge")
+app.add_typer(implementation_app, name="implementation")
+app.add_typer(language_app, name="language")
+app.add_typer(rationale_app, name="rationale")
 app.add_typer(adr_app, name="adr")
 app.add_typer(backfill_app, name="backfill")
+language_app.add_typer(language_area_app, name="area")
+language_app.add_typer(language_term_app, name="term")
+language_app.add_typer(language_ambiguity_app, name="ambiguity")
+implementation_app.add_typer(implementation_report_app, name="report")
 
 PRIORITY_LEVELS = {"low", "medium", "high"}
 GOAL_HORIZONS = {"now", "week", "month", "quarter", "later"}
@@ -220,6 +271,202 @@ def _record_human(record: Record) -> str:
         lines.append("")
         lines.append(record.body.strip())
     return "\n".join(lines)
+
+
+def _validate_rationale_gate(
+    *,
+    hard_to_reverse: bool,
+    surprising_without_context: bool,
+    real_tradeoff: bool,
+) -> dict[str, bool]:
+    gate = {
+        "hard_to_reverse": hard_to_reverse,
+        "surprising_without_context": surprising_without_context,
+        "real_tradeoff": real_tradeoff,
+    }
+    if all(gate.values()):
+        return gate
+    raise PlanledgerError(
+        "invalid_rationale_gate",
+        "Rationale records require all three gate checks: "
+        "hard_to_reverse, surprising_without_context, and real_tradeoff.",
+        remediation=[
+            "Re-run with all required flags:",
+            "planledger rationale create ... --hard-to-reverse "
+            "--surprising-without-context --real-tradeoff",
+        ],
+    )
+
+
+def _render_rationale_body(summary: str | None) -> str:
+    if summary is None or not summary.strip():
+        return RATIONALE_TEMPLATE
+    return f"# Rationale\n\n{summary.strip()}\n\n## Evidence\n"
+
+
+def _rationale_payload(record: Record) -> dict[str, Any]:
+    return {
+        "id": record.record_id,
+        "title": record.front_matter.get("title"),
+        "status": record.front_matter.get("status"),
+        "initiative": record.front_matter.get("initiative"),
+        "decision_type": record.front_matter.get("decision_type"),
+        "area": record.front_matter.get("area"),
+        "rationale_gate": record.front_matter.get("rationale_gate"),
+    }
+
+
+def _create_rationale(
+    workspace: Any,
+    *,
+    title: str,
+    initiative: str,
+    area: str | None,
+    summary: str | None,
+    hard_to_reverse: bool,
+    surprising_without_context: bool,
+    real_tradeoff: bool,
+    command_name: str,
+    result_kind: str,
+    success_label: str,
+) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+    _ = load_record(workspace, "initiative", initiative)
+    gate = _validate_rationale_gate(
+        hard_to_reverse=hard_to_reverse,
+        surprising_without_context=surprising_without_context,
+        real_tradeoff=real_tradeoff,
+    )
+    if area is not None:
+        _ = load_record(workspace, "language_area", area)
+    decision_id = allocate_id(workspace, "decision")
+    timestamp = now_iso()
+    front: dict[str, Any] = {
+        "id": decision_id,
+        "type": "decision",
+        "decision_type": "rationale",
+        "initiative": initiative,
+        "area": area,
+        "title": title,
+        "status": "open",
+        "chosen_option": None,
+        "rationale_gate": gate,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "accepted_at": None,
+    }
+    create_record(workspace, "decision", front, _render_rationale_body(summary))
+    event = append_event(
+        workspace,
+        command=command_name,
+        object_type="decision",
+        object_id=decision_id,
+        event_type="created",
+        after={
+            "title": title,
+            "decision_type": "rationale",
+            "initiative": initiative,
+            "area": area,
+            "rationale_gate": gate,
+        },
+    )
+    return (
+        {
+            "kind": result_kind,
+            "id": decision_id,
+            "title": title,
+            "decision_type": "rationale",
+            "initiative": initiative,
+            "area": area,
+            "rationale_gate": gate,
+        },
+        f"Created {success_label} {decision_id}: {title}",
+        [event],
+    )
+
+
+def _list_rationales(
+    workspace: Any,
+    *,
+    initiative: str | None,
+    command_kind: str,
+) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+    payload = [
+        _rationale_payload(record)
+        for record in list_rationale_records(workspace, initiative=initiative)
+    ]
+    lines = [f"{item['id']} {item['title']} [{item['status']}]" for item in payload]
+    return (
+        {"kind": command_kind, "decisions": payload},
+        "\n".join(lines) or "No rationale records.",
+        [],
+    )
+
+
+def _accept_rationale(
+    workspace: Any,
+    *,
+    decision_ref: str,
+    option: str,
+    rationale: str,
+    command_name: str,
+    result_kind: str,
+    success_label: str,
+    remediation_label: str,
+) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+    decision = load_record(workspace, "decision", decision_ref)
+    if not is_rationale_decision(decision):
+        raise PlanledgerError(
+            "invalid_reference",
+            f"{decision_ref} is not a {remediation_label}.",
+            remediation=[
+                f"Use planledger decision accept for non-{remediation_label} decisions."
+            ],
+        )
+    chosen_option = load_record(workspace, "option", option)
+    if chosen_option.front_matter.get("decision") != decision_ref:
+        raise PlanledgerError(
+            "invalid_reference",
+            f"Option {option} does not belong to {decision_ref}.",
+        )
+    decision.front_matter["status"] = "accepted"
+    decision.front_matter["chosen_option"] = option
+    decision.front_matter["accepted_at"] = now_iso()
+    update_record_timestamp(decision)
+    if "## Rationale" in decision.body:
+        decision.body = decision.body.rstrip() + f"\n\n{rationale}\n"
+    else:
+        decision.body = decision.body.rstrip() + f"\n\n## Rationale\n\n{rationale}\n"
+    save_record(decision)
+    event = append_event(
+        workspace,
+        command=command_name,
+        object_type="decision",
+        object_id=decision_ref,
+        event_type="accepted",
+        after={"chosen_option": option},
+    )
+    return (
+        {
+            "kind": result_kind,
+            "decision": decision_ref,
+            "chosen_option": option,
+        },
+        f"Accepted {success_label} {decision_ref} with option {option}",
+        [event],
+    )
+
+
+def _resolve_challenge_session_ref(workspace: Any, session_ref: str | None) -> Record:
+    if session_ref is not None:
+        return load_challenge_session(workspace, session_ref)
+    sessions = active_challenge_sessions(workspace)
+    if len(sessions) == 1:
+        return sessions[0]
+    raise PlanledgerError(
+        "invalid_reference",
+        "No active challenge session could be resolved automatically.",
+        remediation=["Use --session challenge-0001."],
+    )
 
 
 def _validate_choice(field_name: str, value: str, allowed: set[str]) -> str:
@@ -844,6 +1091,14 @@ def context_export(
     include_taskledger: bool = typer.Option(
         False, "--include-taskledger", "--include", help="Include taskledger status"
     ),
+    include_language: bool = typer.Option(
+        True, "--include-language/--no-include-language", help="Include language records"
+    ),
+    include_rationale: bool = typer.Option(
+        True,
+        "--include-rationale/--no-include-rationale",
+        help="Include rationale records",
+    ),
     include_bodies: bool = typer.Option(
         False, "--include-bodies", help="Include record bodies"
     ),
@@ -864,6 +1119,8 @@ def context_export(
         result = export_context(
             workspace,
             include_taskledger=include_taskledger,
+            include_language=include_language,
+            include_rationale=include_rationale,
             include_bodies=include_bodies,
             max_body_chars=max_body_chars,
             max_events=max_events,
@@ -879,6 +1136,805 @@ def context_export(
         return result, message, []
 
     _run_command(ctx, "context.export", execute)
+
+
+@snapshot_app.command("export")
+def snapshot_export(
+    ctx: typer.Context,
+    include_taskledger: bool = typer.Option(
+        False, "--include-taskledger", "--include", help="Include taskledger status"
+    ),
+    include_language: bool = typer.Option(
+        True, "--include-language/--no-include-language", help="Include language records"
+    ),
+    include_rationale: bool = typer.Option(
+        True,
+        "--include-rationale/--no-include-rationale",
+        help="Include rationale records",
+    ),
+    include_bodies: bool = typer.Option(
+        False, "--include-bodies", help="Include record bodies"
+    ),
+    max_body_chars: int = typer.Option(
+        4000, "--max-body-chars", help="Max body chars per record"
+    ),
+    max_events: int = typer.Option(
+        0, "--max-events", help="Include last N events (0 = none)"
+    ),
+    allow_external_next_action: bool = typer.Option(
+        False,
+        "--allow-external-next-action",
+        help="Allow snapshot export to call external integrations for next action.",
+    ),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        result = export_context(
+            workspace,
+            include_taskledger=include_taskledger,
+            include_language=include_language,
+            include_rationale=include_rationale,
+            include_bodies=include_bodies,
+            max_body_chars=max_body_chars,
+            max_events=max_events,
+            allow_external=allow_external_next_action,
+        )
+        result["kind"] = "planledger_snapshot_export"
+        result["schema"] = "planledger.snapshot.v1"
+        active_init = result.get("active", {}).get("initiative")
+        counts = result.get("counts", {})
+        message = (
+            f"Snapshot export: schema={result['schema']} "
+            f"active_initiative={active_init or 'none'} "
+            f"counts={counts}"
+        )
+        return result, message, []
+
+    _run_command(ctx, "snapshot.export", execute)
+
+
+@discover_app.command("repo")
+def discover_repo_cmd(
+    ctx: typer.Context,
+    output: Path | None = typer.Option(None, "--out"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        result = discover_repo(workspace.root)
+        if output is not None:
+            target = output
+            if not target.is_absolute():
+                target = (workspace.root / target).resolve()
+            target.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            result["output"] = str(target)
+        message = (
+            f"Discovery produced {len(result.get('areas', []))} areas, "
+            f"{len(result.get('terms', []))} terms, "
+            f"{len(result.get('rationales', []))} rationale candidates."
+        )
+        return result, message, []
+
+    _run_command(ctx, "discover.repo", execute)
+
+
+@baseline_app.command("validate")
+def baseline_validate(
+    ctx: typer.Context,
+    bundle_path: Path = typer.Option(..., "--file", help="Path to baseline JSON"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        details = validate_baseline_details(load_baseline_file(bundle_path))
+        result = {
+            "kind": "planledger_baseline_validate",
+            "ok": details.ok,
+            "errors": details.errors,
+            "warnings": details.warnings,
+        }
+        message = (
+            "Baseline validation passed."
+            if details.ok
+            else "Baseline validation failed:\n- " + "\n- ".join(details.errors)
+        )
+        return result, message, []
+
+    _run_command(ctx, "baseline.validate", execute)
+
+
+@baseline_app.command("apply")
+def baseline_apply_cmd(
+    ctx: typer.Context,
+    bundle_path: Path = typer.Option(..., "--file", help="Path to baseline JSON"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        result = apply_baseline(workspace, bundle_path, dry_run=dry_run)
+        message = (
+            f"Baseline dry-run: would create {len(result['created'])} records."
+            if dry_run
+            else f"Baseline applied: created {len(result['created'])}, reused {len(result['reused'])}."
+        )
+        return result, message, result.get("events", [])
+
+    _run_command(ctx, "baseline.apply", execute)
+
+
+@baseline_app.command("review")
+def baseline_review_cmd(ctx: typer.Context) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        result = review_baseline(workspace)
+        records = result["records"]
+        if records:
+            lines = ["Inferred records:"]
+            for record in records:
+                lines.append(
+                    f"  {record['id']} ({record['kind']}) {record.get('title') or ''}".rstrip()
+                )
+            message = "\n".join(lines)
+        else:
+            message = "No inferred records found."
+        return result, message, []
+
+    _run_command(ctx, "baseline.review", execute)
+
+
+@challenge_app.command("start")
+def challenge_start(
+    ctx: typer.Context,
+    plan_ref: str = typer.Option(..., "--plan"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        plan = load_record(workspace, "plan", plan_ref)
+        existing = active_challenge_sessions(workspace, plan_id=plan.record_id)
+        if existing:
+            session = existing[0]
+            return (
+                {
+                    "kind": "planledger_challenge_session",
+                    "id": session.record_id,
+                    "plan": plan.record_id,
+                    "status": session.front_matter.get("status"),
+                    "created": False,
+                },
+                f"Challenge session already active: {session.record_id}",
+                [],
+            )
+        session_id = allocate_id(workspace, "challenge_session")
+        timestamp = now_iso()
+        front = {
+            "id": session_id,
+            "type": "challenge_session",
+            "plan": plan.record_id,
+            "status": "active",
+            "question_refs": [],
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "completed_at": None,
+            "abandoned_at": None,
+        }
+        create_record(workspace, "challenge_session", front, CHALLENGE_SESSION_TEMPLATE)
+        plan.front_matter["challenge_status"] = "active"
+        update_record_timestamp(plan)
+        save_record(plan)
+        event = append_event(
+            workspace,
+            command=f"planledger challenge start --plan {plan.record_id}",
+            object_type="challenge_session",
+            object_id=session_id,
+            event_type="created",
+            after={"plan": plan.record_id, "status": "active"},
+        )
+        return (
+            {
+                "kind": "planledger_challenge_session",
+                "id": session_id,
+                "plan": plan.record_id,
+                "status": "active",
+                "created": True,
+            },
+            f"Started challenge session {session_id} for {plan.record_id}",
+            [event],
+        )
+
+    _run_command(ctx, "challenge.start", execute)
+
+
+@challenge_app.command("show")
+def challenge_show(
+    ctx: typer.Context,
+    session_ref: str,
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        session = load_challenge_session(workspace, session_ref)
+        questions = questions_for_session(workspace, session.record_id)
+        return (
+            {
+                "kind": "planledger_challenge_session",
+                "id": session.record_id,
+                "front_matter": session.front_matter,
+                "body": session.body,
+                "questions": [
+                    {
+                        "id": question.record_id,
+                        "title": question.front_matter.get("title"),
+                        "status": question.front_matter.get("status"),
+                        "priority": question.front_matter.get("priority"),
+                    }
+                    for question in questions
+                ],
+            },
+            _record_human(session),
+            [],
+        )
+
+    _run_command(ctx, "challenge.show", execute)
+
+
+@challenge_app.command("record-question")
+def challenge_record_question(
+    ctx: typer.Context,
+    text: str,
+    session: str | None = typer.Option(None, "--session"),
+    priority: str = typer.Option("medium", "--priority"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        challenge_session = _resolve_challenge_session_ref(workspace, session)
+        question_id = allocate_id(workspace, "question")
+        timestamp = now_iso()
+        front = {
+            "id": question_id,
+            "type": "question",
+            "scope_kind": "plan",
+            "scope_id": challenge_session.front_matter.get("plan"),
+            "title": text,
+            "status": "open",
+            "priority": _validate_choice("priority", priority, PRIORITY_LEVELS),
+            "answer": None,
+            "answered_at": None,
+            "challenge_session": challenge_session.record_id,
+            "question_type": "challenge",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        create_record(workspace, "question", front, QUESTION_TEMPLATE)
+        refs = list(challenge_session.front_matter.get("question_refs") or [])
+        refs.append(question_id)
+        challenge_session.front_matter["question_refs"] = refs
+        update_record_timestamp(challenge_session)
+        save_record(challenge_session)
+        event = append_event(
+            workspace,
+            command=(
+                f"planledger challenge record-question {text} "
+                f"--session {challenge_session.record_id}"
+            ),
+            object_type="challenge_session",
+            object_id=challenge_session.record_id,
+            event_type="challenge_question_recorded",
+            after={"question": question_id, "priority": priority},
+        )
+        return (
+            {
+                "kind": "planledger_challenge_question",
+                "session": challenge_session.record_id,
+                "question": question_id,
+                "status": "open",
+            },
+            f"Recorded challenge question {question_id}",
+            [event],
+        )
+
+    _run_command(ctx, "challenge.record-question", execute)
+
+
+@challenge_app.command("answer")
+def challenge_answer(
+    ctx: typer.Context,
+    question_ref: str,
+    answer: str = typer.Option(..., "--answer"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        question = load_record(workspace, "question", question_ref)
+        question.front_matter["status"] = "answered"
+        question.front_matter["answer"] = answer
+        question.front_matter["answered_at"] = now_iso()
+        update_record_timestamp(question)
+        save_record(question)
+        session_ref = str(question.front_matter.get("challenge_session") or "")
+        if not session_ref:
+            raise PlanledgerError(
+                "invalid_reference",
+                f"{question_ref} is not linked to a challenge session.",
+            )
+        event = append_event(
+            workspace,
+            command=f"planledger challenge answer {question_ref} --answer {answer}",
+            object_type="challenge_session",
+            object_id=session_ref,
+            event_type="challenge_answered",
+            after={"question": question_ref, "answer": answer},
+        )
+        return (
+            {
+                "kind": "planledger_challenge_answer",
+                "question": question_ref,
+                "status": "answered",
+                "challenge_session": session_ref,
+            },
+            f"Answered challenge question {question_ref}",
+            [event],
+        )
+
+    _run_command(ctx, "challenge.answer", execute)
+
+
+@challenge_app.command("complete")
+def challenge_complete(
+    ctx: typer.Context,
+    session: str | None = typer.Option(None, "--session"),
+    allow_open: bool = typer.Option(False, "--allow-open"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        challenge_session = _resolve_challenge_session_ref(workspace, session)
+        high_open = questions_for_session(
+            workspace,
+            challenge_session.record_id,
+            open_only=True,
+            high_only=True,
+        )
+        if high_open and not allow_open:
+            raise PlanledgerError(
+                "challenge_blocked",
+                "Cannot complete challenge while open high-priority questions remain.",
+                remediation=[
+                    f"Answer: planledger question show {high_open[0].record_id}",
+                    "Or re-run with --allow-open.",
+                ],
+            )
+        challenge_session.front_matter["status"] = "completed"
+        challenge_session.front_matter["completed_at"] = now_iso()
+        update_record_timestamp(challenge_session)
+        save_record(challenge_session)
+        plan = load_record(
+            workspace, "plan", str(challenge_session.front_matter.get("plan"))
+        )
+        plan.front_matter["challenge_status"] = "completed"
+        update_record_timestamp(plan)
+        save_record(plan)
+        event = append_event(
+            workspace,
+            command=f"planledger challenge complete --session {challenge_session.record_id}",
+            object_type="challenge_session",
+            object_id=challenge_session.record_id,
+            event_type="challenge_completed",
+            after={"status": "completed"},
+        )
+        return (
+            {
+                "kind": "planledger_challenge_session",
+                "id": challenge_session.record_id,
+                "status": "completed",
+            },
+            f"Completed challenge session {challenge_session.record_id}",
+            [event],
+        )
+
+    _run_command(ctx, "challenge.complete", execute)
+
+
+@challenge_app.command("abandon")
+def challenge_abandon(
+    ctx: typer.Context,
+    session: str | None = typer.Option(None, "--session"),
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        challenge_session = _resolve_challenge_session_ref(workspace, session)
+        challenge_session.front_matter["status"] = "abandoned"
+        challenge_session.front_matter["abandoned_at"] = now_iso()
+        challenge_session.front_matter["abandon_reason"] = reason
+        update_record_timestamp(challenge_session)
+        save_record(challenge_session)
+        plan = load_record(
+            workspace, "plan", str(challenge_session.front_matter.get("plan"))
+        )
+        plan.front_matter["challenge_status"] = "not-started"
+        update_record_timestamp(plan)
+        save_record(plan)
+        event = append_event(
+            workspace,
+            command=(
+                f"planledger challenge abandon --session {challenge_session.record_id} "
+                f"--reason {reason}"
+            ),
+            object_type="challenge_session",
+            object_id=challenge_session.record_id,
+            event_type="challenge_abandoned",
+            after={"status": "abandoned", "reason": reason},
+        )
+        return (
+            {
+                "kind": "planledger_challenge_session",
+                "id": challenge_session.record_id,
+                "status": "abandoned",
+            },
+            f"Abandoned challenge session {challenge_session.record_id}",
+            [event],
+        )
+
+    _run_command(ctx, "challenge.abandon", execute)
+
+
+@implementation_report_app.command("validate")
+def implementation_report_validate(
+    ctx: typer.Context,
+    report_path: Path = typer.Option(..., "--file", help="Path to implementation report JSON"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        details = validate_implementation_report(
+            load_implementation_report(report_path),
+            workspace=workspace,
+        )
+        result = {
+            "kind": "planledger_implementation_report_validate",
+            "ok": details.ok,
+            "errors": details.errors,
+            "warnings": details.warnings,
+            "drift": details.drift,
+        }
+        message = (
+            "Implementation report validation passed."
+            if details.ok
+            else "Implementation report validation failed:\n- "
+            + "\n- ".join(details.errors)
+        )
+        return result, message, []
+
+    _run_command(ctx, "implementation.report.validate", execute)
+
+
+@implementation_report_app.command("apply")
+def implementation_report_apply_cmd(
+    ctx: typer.Context,
+    report_path: Path = typer.Option(..., "--file", help="Path to implementation report JSON"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        result = apply_implementation_report(
+            workspace,
+            load_implementation_report(report_path),
+            dry_run=dry_run,
+        )
+        payload = {
+            "kind": "planledger_implementation_report_apply",
+            "dry_run": dry_run,
+            "updated": result.updated,
+            "created": result.created,
+            "reused": result.reused,
+            "drift": result.drift,
+        }
+        message = (
+            f"Implementation report dry-run: update {len(result.updated)}, create {len(result.created)}, reuse {len(result.reused)}."
+            if dry_run
+            else f"Implementation report applied: update {len(result.updated)}, create {len(result.created)}, reuse {len(result.reused)}."
+        )
+        return payload, message, []
+
+    _run_command(ctx, "implementation.report.apply", execute)
+
+
+@language_area_app.command("create")
+def language_area_create(
+    ctx: typer.Context,
+    title: str,
+    paths: list[str] = typer.Option([], "--paths"),
+    summary: str | None = typer.Option(None, "--summary"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record = create_language_area(
+            workspace,
+            title=title,
+            paths=paths,
+            summary=summary,
+        )
+        event = append_event(
+            workspace,
+            command=f"planledger language area create {title}",
+            object_type="language_area",
+            object_id=record.record_id,
+            event_type="created",
+            after={"title": title, "paths": paths},
+        )
+        return (
+            {
+                "kind": "planledger_language_area",
+                "id": record.record_id,
+                "title": title,
+                "paths": paths,
+            },
+            f"Created language area {record.record_id}: {title}",
+            [event],
+        )
+
+    _run_command(ctx, "language.area.create", execute)
+
+
+@language_area_app.command("list")
+def language_area_list(ctx: typer.Context) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        areas = list_records(workspace, "language_area")
+        payload = [
+            {
+                "id": record.record_id,
+                "title": record.front_matter.get("title"),
+                "status": record.front_matter.get("status"),
+                "paths": record.front_matter.get("paths"),
+            }
+            for record in areas
+        ]
+        lines = [f"{item['id']} {item['title']} [{item['status']}]" for item in payload]
+        return (
+            {"kind": "planledger_language_area_list", "areas": payload},
+            "\n".join(lines) or "No language areas.",
+            [],
+        )
+
+    _run_command(ctx, "language.area.list", execute)
+
+
+@language_term_app.command("add")
+def language_term_add(
+    ctx: typer.Context,
+    canonical: str,
+    area: str | None = typer.Option(None, "--area"),
+    definition: str = typer.Option(..., "--definition"),
+    avoid: list[str] = typer.Option([], "--avoid"),
+    alias: list[str] = typer.Option([], "--alias"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record, created = add_language_term(
+            workspace,
+            canonical=canonical,
+            area=area,
+            definition=definition,
+            avoid=avoid,
+            aliases=alias,
+        )
+        if created:
+            event = append_event(
+                workspace,
+                command=f"planledger language term add {canonical}",
+                object_type="language_term",
+                object_id=record.record_id,
+                event_type="created",
+                after={"canonical": canonical, "area": record.front_matter.get("area")},
+            )
+            message = f"Added language term {record.record_id}: {canonical}"
+            events = [event]
+        else:
+            message = f"Reused language term {record.record_id}: {canonical}"
+            events = []
+        return (
+            {
+                "kind": "planledger_language_term",
+                "id": record.record_id,
+                "canonical": record.front_matter.get("canonical"),
+                "area": record.front_matter.get("area"),
+                "created": created,
+            },
+            message,
+            events,
+        )
+
+    _run_command(ctx, "language.term.add", execute)
+
+
+@language_term_app.command("list")
+def language_term_list(
+    ctx: typer.Context,
+    area: str | None = typer.Option(None, "--area"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        records = list_records(workspace, "language_term")
+        if area is not None:
+            records = [record for record in records if record.front_matter.get("area") == area]
+        payload = [
+            {
+                "id": record.record_id,
+                "canonical": record.front_matter.get("canonical"),
+                "area": record.front_matter.get("area"),
+                "status": record.front_matter.get("status"),
+            }
+            for record in records
+        ]
+        lines = [
+            f"{item['id']} {item['canonical']} [{item['status']}]"
+            for item in payload
+        ]
+        return (
+            {"kind": "planledger_language_term_list", "terms": payload},
+            "\n".join(lines) or "No language terms.",
+            [],
+        )
+
+    _run_command(ctx, "language.term.list", execute)
+
+
+@language_term_app.command("show")
+def language_term_show(ctx: typer.Context, term_ref: str) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record = load_record(workspace, "language_term", term_ref)
+        return (
+            {
+                "kind": "planledger_language_term",
+                "id": record.record_id,
+                "front_matter": record.front_matter,
+                "body": record.body,
+            },
+            _record_human(record),
+            [],
+        )
+
+    _run_command(ctx, "language.term.show", execute)
+
+
+@language_term_app.command("update")
+def language_term_update(
+    ctx: typer.Context,
+    term_ref: str,
+    definition: str | None = typer.Option(None, "--definition"),
+    avoid: list[str] | None = typer.Option(None, "--avoid"),
+    alias: list[str] | None = typer.Option(None, "--alias"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record = update_language_term(
+            workspace,
+            term_ref,
+            definition=definition,
+            avoid=avoid,
+            aliases=alias,
+        )
+        event = append_event(
+            workspace,
+            command=f"planledger language term update {term_ref}",
+            object_type="language_term",
+            object_id=term_ref,
+            event_type="updated",
+            after={"definition": record.front_matter.get("definition")},
+        )
+        return (
+            {
+                "kind": "planledger_language_term",
+                "id": record.record_id,
+                "front_matter": record.front_matter,
+            },
+            f"Updated language term {record.record_id}",
+            [event],
+        )
+
+    _run_command(ctx, "language.term.update", execute)
+
+
+@language_term_app.command("deprecate")
+def language_term_deprecate(
+    ctx: typer.Context,
+    term_ref: str,
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record = deprecate_language_term(workspace, term_ref, reason=reason)
+        event = append_event(
+            workspace,
+            command=f"planledger language term deprecate {term_ref} --reason {reason}",
+            object_type="language_term",
+            object_id=term_ref,
+            event_type="status_changed",
+            after={"status": "deprecated", "reason": reason},
+        )
+        return (
+            {
+                "kind": "planledger_language_term_status",
+                "id": record.record_id,
+                "status": record.front_matter.get("status"),
+            },
+            f"Deprecated language term {record.record_id}",
+            [event],
+        )
+
+    _run_command(ctx, "language.term.deprecate", execute)
+
+
+@language_ambiguity_app.command("add")
+def language_ambiguity_add(
+    ctx: typer.Context,
+    phrase: str,
+    area: str | None = typer.Option(None, "--area"),
+    meaning: list[str] = typer.Option([], "--meaning"),
+    question: str | None = typer.Option(None, "--question"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record = add_language_ambiguity(
+            workspace,
+            phrase=phrase,
+            area=area,
+            meanings=meaning,
+            question=question,
+        )
+        event = append_event(
+            workspace,
+            command=f"planledger language ambiguity add {phrase}",
+            object_type="language_ambiguity",
+            object_id=record.record_id,
+            event_type="created",
+            after={"phrase": phrase, "area": record.front_matter.get("area")},
+        )
+        return (
+            {
+                "kind": "planledger_language_ambiguity",
+                "id": record.record_id,
+                "phrase": phrase,
+                "area": record.front_matter.get("area"),
+            },
+            f"Added language ambiguity {record.record_id}: {phrase}",
+            [event],
+        )
+
+    _run_command(ctx, "language.ambiguity.add", execute)
+
+
+@language_ambiguity_app.command("resolve")
+def language_ambiguity_resolve(
+    ctx: typer.Context,
+    ambiguity_ref: str,
+    resolution: str = typer.Option(..., "--resolution"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        record = resolve_language_ambiguity(
+            workspace,
+            ambiguity_ref,
+            resolution=resolution,
+        )
+        event = append_event(
+            workspace,
+            command=(
+                f"planledger language ambiguity resolve {ambiguity_ref} "
+                f"--resolution {resolution}"
+            ),
+            object_type="language_ambiguity",
+            object_id=ambiguity_ref,
+            event_type="status_changed",
+            after={"status": "resolved", "resolution": resolution},
+        )
+        return (
+            {
+                "kind": "planledger_language_ambiguity",
+                "id": record.record_id,
+                "status": record.front_matter.get("status"),
+                "resolution": record.front_matter.get("resolution"),
+            },
+            f"Resolved language ambiguity {record.record_id}",
+            [event],
+        )
+
+    _run_command(ctx, "language.ambiguity.resolve", execute)
 
 
 @goal_app.command("create")
@@ -3445,47 +4501,156 @@ def evolution_apply_cmd(
     _run_command(ctx, "evolution.apply", execute)
 
 
+@rationale_app.command("create")
+def rationale_create(
+    ctx: typer.Context,
+    title: str,
+    initiative: str = typer.Option(..., "--initiative"),
+    area: str | None = typer.Option(None, "--area"),
+    summary: str | None = typer.Option(None, "--summary"),
+    hard_to_reverse: bool = typer.Option(False, "--hard-to-reverse"),
+    surprising_without_context: bool = typer.Option(
+        False, "--surprising-without-context"
+    ),
+    real_tradeoff: bool = typer.Option(False, "--real-tradeoff"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        return _create_rationale(
+            workspace,
+            title=title,
+            initiative=initiative,
+            area=area,
+            summary=summary,
+            hard_to_reverse=hard_to_reverse,
+            surprising_without_context=surprising_without_context,
+            real_tradeoff=real_tradeoff,
+            command_name=(
+                f"planledger rationale create {title} --initiative {initiative}"
+            ),
+            result_kind="planledger_rationale",
+            success_label="rationale",
+        )
+
+    _run_command(ctx, "rationale.create", execute)
+
+
+@rationale_app.command("list")
+def rationale_list(
+    ctx: typer.Context,
+    initiative: str | None = typer.Option(None, "--initiative"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        return _list_rationales(
+            workspace,
+            initiative=initiative,
+            command_kind="planledger_rationale_list",
+        )
+
+    _run_command(ctx, "rationale.list", execute)
+
+
+@rationale_app.command("show")
+def rationale_show(ctx: typer.Context, decision_ref: str) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        decision = load_record(workspace, "decision", decision_ref)
+        if not is_rationale_decision(decision):
+            raise PlanledgerError(
+                "invalid_reference",
+                f"{decision_ref} is not a rationale record.",
+                remediation=["Use planledger decision show for non-rationale decisions."],
+            )
+        options = [
+            option
+            for option in list_records(workspace, "option")
+            if option.front_matter.get("decision") == decision_ref
+        ]
+        return (
+            {
+                "kind": "planledger_rationale",
+                "id": decision.record_id,
+                "front_matter": decision.front_matter,
+                "body": decision.body,
+                "options": [
+                    {
+                        "id": option.record_id,
+                        "title": option.front_matter.get("title"),
+                        "status": option.front_matter.get("status"),
+                    }
+                    for option in options
+                ],
+            },
+            _record_human(decision),
+            [],
+        )
+
+    _run_command(ctx, "rationale.show", execute)
+
+
+@rationale_app.command("accept")
+def rationale_accept(
+    ctx: typer.Context,
+    decision_ref: str,
+    option: str = typer.Option(..., "--option"),
+    rationale: str = typer.Option(..., "--rationale"),
+) -> None:
+    def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(ctx)
+        return _accept_rationale(
+            workspace,
+            decision_ref=decision_ref,
+            option=option,
+            rationale=rationale,
+            command_name=(
+                f"planledger rationale accept {decision_ref} "
+                f"--option {option} --rationale {rationale}"
+            ),
+            result_kind="planledger_rationale_accept",
+            success_label="rationale",
+            remediation_label="rationale",
+        )
+
+    _run_command(ctx, "rationale.accept", execute)
+
+
 @adr_app.command("create")
 def adr_create(
     ctx: typer.Context,
     title: str,
     initiative: str = typer.Option(..., "--initiative"),
+    area: str | None = typer.Option(None, "--area"),
+    summary: str | None = typer.Option(None, "--summary"),
+    hard_to_reverse: bool = typer.Option(False, "--hard-to-reverse"),
+    surprising_without_context: bool = typer.Option(
+        False, "--surprising-without-context"
+    ),
+    real_tradeoff: bool = typer.Option(False, "--real-tradeoff"),
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        _ = load_record(workspace, "initiative", initiative)
-        decision_id = allocate_id(workspace, "decision")
-        timestamp = now_iso()
-        front: dict[str, Any] = {
-            "id": decision_id,
-            "type": "decision",
-            "decision_type": "architecture",
-            "initiative": initiative,
-            "title": title,
-            "status": "open",
-            "chosen_option": None,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "accepted_at": None,
-        }
-        create_record(workspace, "decision", front, ADR_TEMPLATE)
-        event = append_event(
+        resolved_hard_to_reverse = hard_to_reverse
+        resolved_surprising = surprising_without_context
+        resolved_real_tradeoff = real_tradeoff
+        if not any(
+            [resolved_hard_to_reverse, resolved_surprising, resolved_real_tradeoff]
+        ):
+            resolved_hard_to_reverse = True
+            resolved_surprising = True
+            resolved_real_tradeoff = True
+        return _create_rationale(
             workspace,
-            command=f"planledger adr create {title} --initiative {initiative}",
-            object_type="decision",
-            object_id=decision_id,
-            event_type="created",
-            after={"title": title, "decision_type": "architecture"},
-        )
-        return (
-            {
-                "kind": "planledger_adr",
-                "id": decision_id,
-                "title": title,
-                "decision_type": "architecture",
-            },
-            f"Created ADR {decision_id}: {title}",
-            [event],
+            title=title,
+            initiative=initiative,
+            area=area,
+            summary=summary,
+            hard_to_reverse=resolved_hard_to_reverse,
+            surprising_without_context=resolved_surprising,
+            real_tradeoff=resolved_real_tradeoff,
+            command_name=f"planledger adr create {title} --initiative {initiative}",
+            result_kind="planledger_adr",
+            success_label="ADR",
         )
 
     _run_command(ctx, "adr.create", execute)
@@ -3498,28 +4663,10 @@ def adr_list(
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        decisions = list_records(workspace, "decision")
-        adrs = [
-            d
-            for d in decisions
-            if d.front_matter.get("decision_type") == "architecture"
-        ]
-        if initiative is not None:
-            adrs = [d for d in adrs if d.front_matter.get("initiative") == initiative]
-        payload = [
-            {
-                "id": d.record_id,
-                "title": d.front_matter.get("title"),
-                "status": d.front_matter.get("status"),
-                "initiative": d.front_matter.get("initiative"),
-            }
-            for d in adrs
-        ]
-        lines = [f"{item['id']} {item['title']} [{item['status']}]" for item in payload]
-        return (
-            {"kind": "planledger_adr_list", "decisions": payload},
-            "\n".join(lines) or "No ADRs.",
-            [],
+        return _list_rationales(
+            workspace,
+            initiative=initiative,
+            command_kind="planledger_adr_list",
         )
 
     _run_command(ctx, "adr.list", execute)
@@ -3534,49 +4681,18 @@ def adr_accept(
 ) -> None:
     def execute() -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
         workspace = _resolve_workspace(ctx)
-        decision = load_record(workspace, "decision", decision_ref)
-        if decision.front_matter.get("decision_type") != "architecture":
-            raise PlanledgerError(
-                "invalid_reference",
-                f"{decision_ref} is not an ADR.",
-                remediation=["Use planledger decision accept for non-ADR decisions."],
-            )
-        chosen_option = load_record(workspace, "option", option)
-        if chosen_option.front_matter.get("decision") != decision_ref:
-            raise PlanledgerError(
-                "invalid_reference",
-                f"Option {option} does not belong to {decision_ref}.",
-            )
-        decision.front_matter["status"] = "accepted"
-        decision.front_matter["chosen_option"] = option
-        decision.front_matter["accepted_at"] = now_iso()
-        update_record_timestamp(decision)
-        if "## Rationale" in decision.body:
-            decision.body = decision.body.rstrip() + f"\n\n{rationale}\n"
-        else:
-            decision.body = (
-                decision.body.rstrip() + f"\n\n## Rationale\n\n{rationale}\n"
-            )
-        save_record(decision)
-        event = append_event(
+        return _accept_rationale(
             workspace,
-            command=(
+            decision_ref=decision_ref,
+            option=option,
+            rationale=rationale,
+            command_name=(
                 f"planledger adr accept {decision_ref} "
                 f"--option {option} --rationale {rationale}"
             ),
-            object_type="decision",
-            object_id=decision_ref,
-            event_type="accepted",
-            after={"chosen_option": option},
-        )
-        return (
-            {
-                "kind": "planledger_adr_accept",
-                "decision": decision_ref,
-                "chosen_option": option,
-            },
-            f"Accepted ADR {decision_ref} with option {option}",
-            [event],
+            result_kind="planledger_adr_accept",
+            success_label="ADR",
+            remediation_label="ADR",
         )
 
     _run_command(ctx, "adr.accept", execute)

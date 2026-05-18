@@ -205,6 +205,26 @@ def test_unknown_top_level_field_warns_or_errors():
     assert any("Unknown top-level field" in e for e in strict.errors)
 
 
+def test_language_section_validates():
+    bundle = {
+        "schema": "planledger.plan_bundle.v1",
+        "request": {"title": "T"},
+        "plan": {"title": "T", "objectives": ["O"]},
+        "language": {
+            "areas": [{"title": "Ordering"}],
+            "terms": [
+                {
+                    "canonical": "Order",
+                    "definition": "A customer request for goods or services.",
+                }
+            ],
+            "ambiguities": [{"phrase": "account"}],
+        },
+    }
+    errors = validate_bundle(bundle)
+    assert errors == []
+
+
 def test_example_bundle_validates():
     bundle = load_bundle(
         Path(__file__).resolve().parent.parent / "examples" / "harness_bundle_v1.json"

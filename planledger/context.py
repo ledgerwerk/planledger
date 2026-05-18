@@ -71,6 +71,8 @@ def export_context(
     workspace: Workspace,
     *,
     include_taskledger: bool = False,
+    include_language: bool = True,
+    include_rationale: bool = True,
     include_bodies: bool = False,
     max_body_chars: int = 4000,
     max_events: int = 0,
@@ -216,6 +218,16 @@ def export_context(
         for d in all_decisions
         if d.front_matter.get("status") == "open"
     ]
+    rationales = [
+        _record_summary(
+            d,
+            include_body=include_bodies,
+            max_body_chars=max_body_chars,
+        )
+        for d in all_decisions
+        if include_rationale
+        and d.front_matter.get("decision_type") in {"rationale", "architecture"}
+    ]
 
     all_risks = list_records(workspace, "risk")
     risks = [
@@ -267,6 +279,7 @@ def export_context(
 
     result["records"] = {
         "open_decisions": open_decisions,
+        "rationales": rationales,
         "risks": risks,
         "ready_slices": ready_slices,
         "executing_slices": executing_slices,
@@ -301,6 +314,39 @@ def export_context(
         "recently_closed_goals": closed_goals,
         "blocked_from_taskledger": blocked_from_taskledger,
     }
+    language_areas = [
+        _record_summary(
+            record,
+            include_body=include_bodies,
+            max_body_chars=max_body_chars,
+        )
+        for record in list_records(workspace, "language_area")
+    ]
+    language_terms = [
+        _record_summary(
+            record,
+            include_body=include_bodies,
+            max_body_chars=max_body_chars,
+        )
+        for record in list_records(workspace, "language_term")
+    ]
+    language_ambiguities = [
+        _record_summary(
+            record,
+            include_body=include_bodies,
+            max_body_chars=max_body_chars,
+        )
+        for record in list_records(workspace, "language_ambiguity")
+    ]
+    if include_language:
+        result["language"] = {
+            "areas": language_areas,
+            "terms": language_terms,
+            "ambiguities": language_ambiguities,
+        }
+        result["records"]["language_areas"] = language_areas
+        result["records"]["language_terms"] = language_terms
+        result["records"]["language_ambiguities"] = language_ambiguities
 
     open_questions = result["records"]["open_questions"]
     unverified_assumptions = result["records"]["unverified_assumptions"]

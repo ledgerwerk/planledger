@@ -16,27 +16,29 @@ Use planledger as a hidden durable project-intent ledger. The human does not nee
 
 ## Mandatory execution contract
 
-When this skill is loaded for planning, architecture, cross-module changes, ADR work, migration work, or taskledger handoff, the agent MUST use the planledger CLI. Reading this skill is not sufficient.
+When this skill is loaded for planning, rationale work, cross-module changes, migration work, or taskledger handoff, the agent MUST use the planledger CLI. Reading this skill is not sufficient.
 
 First action after loading this skill:
 
 1. Run `planledger --json status`.
 2. If the workspace is not initialized and the user asked for planning in the current project, run `planledger init --project-name "<project>"`, then run `planledger --json status` again.
-3. Run `planledger --json context export --include-bodies --max-body-chars 4000` before drafting a bundle.
+3. Run `planledger --json snapshot export --include-language --include-rationale --include-bodies --max-body-chars 4000` before drafting a bundle. `context export` remains a compatibility alias.
 4. Inspect active, exploring, and recently closed goals before deciding what to do next.
 
-The agent MUST NOT skip planledger when the user explicitly asks to use planledger, asks for a planledger bundle, asks for taskledger handoff, or the request involves architecture, cross-module workflow, migrations, ADRs, backfill, or repair.
+The agent MUST NOT skip planledger when the user explicitly asks to use planledger, asks for a planledger bundle, asks for taskledger handoff, or the request involves rationale, cross-module workflow, migrations, backfill, or repair. `adr` remains a compatibility alias.
 
 ## Default workflow
 
 1. `planledger --json status`
-2. `planledger --json context export --include-bodies --max-body-chars 4000`
+2. `planledger --json snapshot export --include-language --include-rationale --include-bodies --max-body-chars 4000`
 3. Classify the request before mutating anything:
+   - brown-field discovery or baseline work;
    - shaping or clarifying goals;
    - lifecycle update for existing work;
    - implementation planning;
-   - taskledger handoff;
-   - repair or stale-state evolution.
+   - challenge or pre-handoff review;
+    - taskledger handoff;
+    - closeout, repair, or stale-state evolution.
 4. If the user is unsure of the goal, create or reuse an `exploring` goal, then add questions or assumptions. Do not create taskledger tasks.
 5. If the user says a goal is fulfilled, cancelled, obsolete, or superseded, record that lifecycle change directly. Do not create new implementation tasks unless asked.
 6. If implementation planning is requested, write a `planledger.plan_bundle.v1` JSON file.
@@ -48,10 +50,16 @@ The agent MUST NOT skip planledger when the user explicitly asks to use planledg
     - `planledger --json taskledger detect`
     - `planledger --json taskledger push-plan <result.plan_id> --create-tasks`
     - If the result has zero created tasks, report that handoff did not complete and why. Do not claim taskledger handoff succeeded.
-12. If state is stale or contradictory, use the repair or evolution flow:
+12. If the plan requires challenge, complete the challenge session before taskledger handoff:
+    - `planledger challenge start --plan plan-0001`
+    - `planledger challenge complete --session challenge-0001`
+13. If state is stale or contradictory, use the repair, evolution, or closeout flow:
     - `planledger --json evolution validate --file evolution.json`
     - `planledger --json evolution apply --file evolution.json --dry-run`
     - `planledger --json evolution apply --file evolution.json`
+    - `planledger implementation report validate --file report.json`
+    - `planledger implementation report apply --file report.json --dry-run`
+    - `planledger implementation report apply --file report.json`
 
 ## Human interaction rules
 
@@ -64,7 +72,7 @@ The agent MUST NOT skip planledger when the user explicitly asks to use planledg
 
 Skip planledger for trivial one-file edits with obvious implementation and low risk unless the user explicitly asks for planning.
 
-Use full planledger workflow for architecture, migrations, new workflows, cross-module changes, taskledger handoff, or any request involving ADRs/decisions.
+Use full planledger workflow for rationale, migrations, new workflows, cross-module changes, taskledger handoff, or any request involving rationale/decisions.
 
 ## Planning modes
 
@@ -87,9 +95,9 @@ Every executable slice in a `planledger.plan_bundle.v1` bundle should include:
 - risks or assumptions if relevant
 - taskledger readiness flag
 
-## Context export
+## Snapshot export
 
-Use `planledger --json context export` to get a snapshot of project intent including active goals, exploring goals, recently closed goals, open questions, assumptions, constraints, handoff blockers, and next action.
+Use `planledger --json snapshot export` to get a snapshot of project intent including active goals, exploring goals, recently closed goals, project language, rationale, open questions, assumptions, constraints, handoff blockers, and next action. `context export` remains supported as a compatibility alias.
 
 ## Bundle commands
 
@@ -107,6 +115,14 @@ planledger --json evolution apply --file evolution.json --dry-run
 planledger --json evolution apply --file evolution.json
 ```
 
+## Implementation closeout commands
+
+```bash
+planledger implementation report validate --file report.json
+planledger implementation report apply --file report.json --dry-run
+planledger implementation report apply --file report.json
+```
+
 ## Taskledger handoff
 
 ```bash
@@ -115,19 +131,27 @@ planledger --json taskledger push-plan <plan-id-from-apply-result> --create-task
 planledger --json taskledger push-plan <plan-id-from-apply-result> --dry-run
 ```
 
-## ADR commands
+## Rationale commands
+
+```bash
+planledger rationale create "Decision title" --initiative init-0001 --hard-to-reverse --surprising-without-context --real-tradeoff
+planledger --json rationale list --initiative init-0001
+planledger rationale accept dec-0001 --option opt-0001 --rationale "..."
+```
+
+Compatibility alias:
 
 ```bash
 planledger adr create "Decision title" --initiative init-0001
-planledger --json adr list --initiative init-0001
-planledger adr accept dec-0001 --option opt-0001 --rationale "..."
 ```
 
 ## Backfill for existing projects
 
 ```bash
-planledger --json backfill apply --file baseline.json
-planledger --json backfill review
+planledger --json discover repo --out baseline.json
+planledger --json baseline validate --file baseline.json
+planledger --json baseline apply --file baseline.json
+planledger --json baseline review
 ```
 
 ## Final response evidence checklist

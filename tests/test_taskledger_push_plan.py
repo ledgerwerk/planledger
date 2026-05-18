@@ -10,6 +10,8 @@ from planledger.storage import (
     create_record,
     initialize_project,
     list_records,
+    load_record,
+    save_record,
     set_active_initiative,
 )
 from planledger.taskledger import generate_plan_template, push_plan
@@ -144,3 +146,21 @@ def test_generate_plan_template_uses_slice_fields(workspace_with_bundle):
     assert "planledger/context.py" in text
     assert "## Validation hints" in text
     assert "python -m pytest tests/test_context_export.py -q" in text
+
+
+def test_push_plan_blocks_when_required_challenge_is_incomplete(workspace_with_bundle):
+    ws = workspace_with_bundle
+    plan = list_records(ws, "plan")[0]
+    plan.front_matter["planning_mode"] = "full"
+    plan.front_matter["requires_challenge"] = True
+    plan.front_matter["challenge_status"] = "active"
+    save_record(plan)
+
+    with pytest.raises(Exception, match="challenge_incomplete"):
+        push_plan(ws, plan.record_id, dry_run=True)
+
+    refreshed = load_record(ws, "plan", plan.record_id)
+    refreshed.front_matter["challenge_status"] = "completed"
+    save_record(refreshed)
+    result = push_plan(ws, plan.record_id, dry_run=True)
+    assert result["dry_run"] is True

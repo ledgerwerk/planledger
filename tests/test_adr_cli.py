@@ -79,10 +79,10 @@ def test_adr_create(workspace_with_initiative):
     decisions = list_records(ws, "decision")
     assert len(decisions) == 1
     dec = decisions[0]
-    assert dec.front_matter.get("decision_type") == "architecture"
+    assert dec.front_matter.get("decision_type") == "rationale"
     assert dec.front_matter.get("title") == "Use PostgreSQL"
     assert dec.front_matter.get("status") == "open"
-    assert "## Context" in dec.body
+    assert dec.body.startswith("# Rationale")
 
 
 def test_adr_list(workspace_with_initiative):
@@ -182,13 +182,13 @@ def test_adr_accept(workspace_with_initiative):
     assert dec.front_matter.get("chosen_option") == opt_a.record_id
 
 
-def test_adr_only_lists_architecture_decisions(workspace_with_initiative):
+def test_adr_only_lists_rationale_records(workspace_with_initiative):
     from planledger.storage import allocate_id as alloc
     from planledger.storage import create_record as create
 
     ws, init_id = workspace_with_initiative
 
-    # Create a non-architecture decision
+    # Create a non-rationale decision.
     dec_id = alloc(ws, "decision")
     create(
         ws,
@@ -221,3 +221,41 @@ def test_adr_only_lists_architecture_decisions(workspace_with_initiative):
 
     data = json.loads(result.stdout)
     assert len(data["result"]["decisions"]) == 0
+
+
+def test_adr_list_includes_legacy_architecture_records(workspace_with_initiative):
+    from planledger.storage import allocate_id as alloc
+    from planledger.storage import create_record as create
+
+    ws, init_id = workspace_with_initiative
+    dec_id = alloc(ws, "decision")
+    create(
+        ws,
+        "decision",
+        {
+            "id": dec_id,
+            "type": "decision",
+            "initiative": init_id,
+            "title": "Legacy architecture record",
+            "decision_type": "architecture",
+            "status": "open",
+            "chosen_option": None,
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z",
+            "accepted_at": None,
+        },
+        "",
+    )
+
+    from typer.testing import CliRunner
+
+    from planledger.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--cwd", str(ws.root), "--json", "adr", "list"])
+    assert result.exit_code == 0, result.stdout
+
+    import json
+
+    data = json.loads(result.stdout)
+    assert [item["id"] for item in data["result"]["decisions"]] == [dec_id]

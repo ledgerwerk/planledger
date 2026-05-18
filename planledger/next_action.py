@@ -3,6 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from planledger.challenge import (
+    active_challenge_sessions,
+    challenge_status_for_plan,
+    plan_requires_challenge,
+    questions_for_session,
+)
 from planledger.lifecycle import ACTIVE_GOAL_STATUSES, blocks_execution, is_terminal
 from planledger.models import Record, Workspace
 from planledger.storage import (
@@ -473,6 +479,56 @@ def _action_for_shaping_slice(workspace: Workspace) -> dict[str, Any] | None:
     )
 
 
+def _action_for_active_challenge(workspace: Workspace) -> dict[str, Any] | None:
+    sessions = active_challenge_sessions(workspace)
+    if not sessions:
+        return None
+    session = sessions[0]
+    open_questions = questions_for_session(workspace, session.record_id, open_only=True)
+    next_command = f"planledger challenge show {session.record_id}"
+    if open_questions:
+        next_command = f"planledger question show {open_questions[0].record_id}"
+    return _action(
+        "continue-challenge",
+        next_command,
+        next_item={
+            "kind": "challenge_session",
+            "id": session.record_id,
+            "plan": session.front_matter.get("plan"),
+        },
+        commands=[
+            _cmd("inspect", "Show challenge", f"planledger challenge show {session.record_id}"),
+        ],
+    )
+
+
+def _action_for_required_challenge(workspace: Workspace) -> dict[str, Any] | None:
+    plans = [
+        plan
+        for plan in list_records(workspace, "plan")
+        if str(plan.front_matter.get("status", "")) in {"accepted", "draft"}
+    ]
+    for plan in plans:
+        if not plan_requires_challenge(plan):
+            continue
+        status = challenge_status_for_plan(workspace, plan)
+        if status in {"completed", "waived"}:
+            continue
+        return _action(
+            "start-challenge",
+            f"planledger challenge start --plan {plan.record_id}",
+            next_item={"kind": "plan", "id": plan.record_id},
+            commands=[
+                _cmd(
+                    "complete",
+                    "Start challenge",
+                    f"planledger challenge start --plan {plan.record_id}",
+                )
+            ],
+        )
+    return None
+
+
 def _action_for_ready_slice(workspace: Workspace) -> dict[str, Any] | None:
     ready = [
         item
@@ -587,6 +643,8 @@ CHECKERS = [
     _action_for_missing_milestones,
     _action_for_missing_slices,
     _action_for_shaping_slice,
+    _action_for_active_challenge,
+    _action_for_required_challenge,
     _action_for_ready_slice,
     _action_for_executing_slice,
     _action_for_completed_goal,

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from planledger.challenge import challenge_status_for_plan, plan_requires_challenge
 from planledger.lifecycle import EXECUTION_BLOCKING_SLICE_STATUSES, blocks_execution, is_terminal
 from planledger.errors import PlanledgerError
 from planledger.models import Workspace
@@ -376,6 +377,17 @@ def push_plan(
         )
     plan_record = load_record(workspace, "plan", plan_id)
     _require_handoff_lineage(workspace, plan_record, plan_id)
+    if plan_requires_challenge(plan_record):
+        challenge_status = challenge_status_for_plan(workspace, plan_record)
+        if challenge_status not in {"completed", "waived"}:
+            raise PlanledgerError(
+                "challenge_incomplete",
+                f"Plan {plan_id} requires a completed challenge session before taskledger handoff.",
+                remediation=[
+                    f"Run: planledger challenge start --plan {plan_id}",
+                    "Complete the challenge or waive it before push-plan.",
+                ],
+            )
     initiative_id = str(plan_record.front_matter.get("initiative"))
 
     all_slices = list_records(workspace, "slice")

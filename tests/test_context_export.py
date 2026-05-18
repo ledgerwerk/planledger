@@ -63,9 +63,13 @@ def test_export_empty_workspace(workspace):
     assert result["project"]["name"] == "Test Export"
     assert result["active"] == {}
     assert result["records"]["open_decisions"] == []
+    assert result["records"]["rationales"] == []
     assert result["records"]["risks"] == []
     assert result["records"]["ready_slices"] == []
     assert result["records"]["bindings"] == []
+    assert result["language"]["areas"] == []
+    assert result["language"]["terms"] == []
+    assert result["language"]["ambiguities"] == []
     assert "counts" in result
     assert "next_action" in result
 
@@ -188,3 +192,4 @@ def test_context_export_cli(workspace, runner):
     data = json.loads(result.stdout)
     assert data["ok"] is True
     assert data["result"]["schema"] == "planledger.context.v1"
+    assert "language" in data["result"]
