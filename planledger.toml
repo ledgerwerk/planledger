@@ -1,6 +1,6 @@
 [project]
-name = "Planledger"
-uuid = "1586188b-4afb-4acc-b65e-a85261d46dde"
+name = "planledger"
+uuid = "7f8fa0cb-3b38-4de5-89d8-e268d2ff9061"
 
 [storage]
 planledger_dir = ".planledger"
