@@ -26,7 +26,7 @@ def test_storage_creates_loads_and_lists_independent_plans(tmp_path: Path) -> No
             "summary": "A concise summary.",
             "context": "Repository context.",
             "approach": "Recommended approach.",
-            "implementation_steps": "1. Do the work.",
+            "todo_items": "1. Do the work.",
             "validation": "Run pytest.",
         },
     )

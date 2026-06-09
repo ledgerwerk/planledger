@@ -91,7 +91,7 @@ def build_plan(
     include_empty: bool = False,
 ) -> dict[str, Any]:
     plan = load_plan(workspace, plan_id)
-    errors = validate_plan(plan)
+    errors = validate_plan(plan, for_done=plan.status == "done")
     if errors:
         raise PlanledgerError(
             "invalid_plan",

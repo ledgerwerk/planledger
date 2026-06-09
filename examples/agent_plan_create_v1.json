@@ -1,0 +1,18 @@
+{
+  "schema": "planledger.structured_plan.v1",
+  "operation": "create",
+  "plan": {
+    "title": "Add feature A",
+    "status": "new",
+    "request": "Please review how we can add feature A. Ask me questions when something is not clear.",
+    "components": {
+      "summary": "Plan to add feature A after repository inspection.",
+      "context": "Repository facts and evidence go here.",
+      "approach": "Recommended implementation approach goes here.",
+      "todo_items": "### TODO-001: Implement feature A\n\n**Target files**\n\n- [`planledger/cli.py`](planledger/cli.py)\n\n**Acceptance criteria**\n\n- [ ] CLI exposes the new behavior.\n\n**Validation**\n\n- `python -m pytest -q`",
+      "target_files": "- [`planledger/cli.py`](planledger/cli.py) — CLI wiring.",
+      "validation": "- `python -m pytest -q`",
+      "risks": "- Risk: scope ambiguity. Mitigation: keep open questions in the plan."
+    }
+  }
+}

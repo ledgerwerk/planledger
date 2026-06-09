@@ -4,9 +4,3 @@ uuid = "1586188b-4afb-4acc-b65e-a85261d46dde"
 
 [storage]
 planledger_dir = ".planledger"
-ledger_ref = "main"
-
-[integrations.taskledger]
-enabled = true
-workspace_root = "."
-command = "taskledger"

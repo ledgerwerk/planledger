@@ -23,7 +23,7 @@ def test_setting_component_increments_version_and_snapshots(
         "component",
         "set",
         "plan-0001",
-        "implementation_steps",
+        "todo_items",
         "--text",
         "1. Split storage work.\n2. Update the CLI.",
     )

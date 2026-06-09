@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from planledger.errors import PlanledgerError
+from planledger.guardrails import validate_handoff_contents
 from planledger.render import build_plan
 from planledger.storage import (
     VALID_STATUSES,
@@ -91,11 +92,13 @@ def _validate_create_bundle(bundle: dict[str, Any], errors: list[str]) -> None:
     if not isinstance(request, str) or not request.strip():
         errors.append("Create bundles require plan.request.")
     _validate_bundle_status(plan.get("status"), label="Create bundle", errors=errors)
-    _validate_components(
+    components = _validate_components(
         plan.get("components"),
         section_name="plan.components",
         errors=errors,
     )
+    if plan.get("status") == "done":
+        errors.extend(validate_handoff_contents(components))
 
 
 def _validate_done_update(
@@ -113,6 +116,7 @@ def _validate_done_update(
                 f"Required component {key!r} would be empty "
                 "when setting status to done."
             )
+    errors.extend(validate_handoff_contents(current_contents))
 
 
 def _validate_update_bundle(

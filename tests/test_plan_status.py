@@ -4,12 +4,25 @@ from pathlib import Path
 
 
 def _fill_required_components(workspace: Path, invoke) -> None:
+    _todo = (
+        "### TODO-001: Implement the feature\n\n"
+        "**Target files**\n\n"
+        "- `planledger/storage.py`\n\n"
+        "**Acceptance criteria**\n\n"
+        "- [ ] Feature works.\n\n"
+        "**Validation**\n\n"
+        "- `python -m pytest -q`"
+    )
+    _target = "- `planledger/storage.py` \u2014 storage changes."
+    _risks = "- Risk: scope creep. Mitigation: keep changes focused."
     component_values = {
         "summary": "Summary text.",
         "context": "Repository context.",
         "approach": "Recommended approach.",
-        "implementation_steps": "1. Implement the feature.",
-        "validation": "Run pytest.",
+        "todo_items": _todo,
+        "target_files": _target,
+        "validation": "Run `python -m pytest -q`.",
+        "risks": _risks,
     }
     for key, value in component_values.items():
         result = invoke(

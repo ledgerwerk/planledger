@@ -49,7 +49,7 @@ def test_build_is_deterministic_and_standalone(
     assert out_build.exit_code == 0, out_build.stdout
     assert first.stdout == second.stdout
     assert "## Proposed approach" in first.stdout
-    assert "## Risks" not in first.stdout
+    assert "## Risks and mitigations" in first.stdout
     assert ".planledger/plans/" not in first.stdout
     assert (
         out_path.read_text()

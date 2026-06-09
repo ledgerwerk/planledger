@@ -14,6 +14,7 @@ from uuid import uuid4
 import yaml
 
 from planledger.errors import PlanledgerError
+from planledger.guardrails import validate_handoff_contents
 from planledger.models import AppContext, ComponentSpec, Plan, PlanStatus, Workspace
 
 if sys.version_info >= (3, 11):
@@ -42,21 +43,27 @@ VALID_TRANSITIONS: dict[PlanStatus, set[PlanStatus]] = {
 }
 COMPONENT_DEFINITIONS: tuple[tuple[str, str, str, int, bool], ...] = (
     ("request", "components/00-request.md", "Original request", 0, True),
-    ("summary", "components/10-summary.md", "Summary", 10, True),
-    ("context", "components/20-context.md", "Repository context", 20, True),
+    ("summary", "components/10-executive-verdict.md", "Executive verdict", 10, True),
+    (
+        "context",
+        "components/20-context.md",
+        "Repository context and evidence",
+        20,
+        True,
+    ),
     ("open_questions", "components/30-open-questions.md", "Open questions", 30, False),
     ("assumptions", "components/40-assumptions.md", "Assumptions", 40, False),
     ("approach", "components/50-approach.md", "Proposed approach", 50, True),
     (
-        "implementation_steps",
-        "components/60-implementation-steps.md",
-        "Implementation steps",
+        "todo_items",
+        "components/60-todo-items.md",
+        "Todo items",
         60,
         True,
     ),
-    ("target_files", "components/70-target-files.md", "Target files", 70, False),
-    ("validation", "components/80-validation.md", "Validation", 80, True),
-    ("risks", "components/90-risks.md", "Risks", 90, False),
+    ("target_files", "components/70-target-files.md", "Target files", 70, True),
+    ("validation", "components/80-validation.md", "Validation plan", 80, True),
+    ("risks", "components/90-risks.md", "Risks and mitigations", 90, True),
     ("rollback", "components/95-rollback.md", "Rollback / repair", 95, False),
     ("notes", "components/99-notes.md", "Notes", 99, False),
 )
@@ -550,6 +557,7 @@ def validate_plan(plan: Plan, *, for_done: bool = False) -> list[str]:
             errors.append(f"Unknown component metadata for {key!r}.")
     if for_done:
         errors.extend(_required_component_content_errors(plan, contents))
+        errors.extend(validate_handoff_contents(contents))
     return errors
 
 
@@ -583,10 +591,11 @@ def create_plan(
             components=copy.deepcopy(specs),
         )
         done_errors = _required_component_content_errors(provisional_plan, contents)
+        done_errors.extend(validate_handoff_contents(contents))
         if done_errors:
             raise PlanledgerError(
                 "invalid_plan",
-                "Cannot create a done plan with empty required components.",
+                "Cannot create a done plan: validation failed.",
                 remediation=done_errors,
             )
     for key in ordered_component_keys(specs):
@@ -700,10 +709,11 @@ def apply_plan_mutations(
             status_changed = True
     if next_status == "done":
         errors = _required_component_content_errors(plan, next_contents)
+        errors.extend(validate_handoff_contents(next_contents))
         if errors:
             raise PlanledgerError(
                 "invalid_plan",
-                "Cannot set plan status to done while required components are empty.",
+                "Cannot set plan status to done: validation failed.",
                 remediation=errors,
             )
     if not changed_keys and not status_changed:

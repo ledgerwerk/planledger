@@ -51,7 +51,7 @@ def test_bundle_dry_run_create_and_single_increment_update(
                 "reason": "Human requested a refinement.",
                 "components": {
                     "summary": "Updated summary.",
-                    "implementation_steps": "1. Update storage.\n2. Update CLI.",
+                    "todo_items": "1. Update storage.\n2. Update CLI.",
                 },
             }
         ),
