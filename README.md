@@ -12,7 +12,7 @@ Planledger stores independent, structured, versioned implementation plans and re
 
 ## What it does
 
-- stores independent plans under `.planledger/plans/plan-0001/`;
+- stores independent plans under the configured Planledger storage directory, for example `.planledger/plans/plan-0001/` or `../planledger-state/planledger/plans/plan-0001/`;
 - versions every meaningful plan change;
 - keeps each plan as modular component files;
 - renders a standalone Markdown artifact for human or coding-agent handoff;
@@ -169,7 +169,7 @@ Explain the design and why it is acceptable.
 ## Filesystem layout
 
 ```text
-.planledger/
+<configured planledger_dir>/
   storage.yaml
   plans/
     plan-0001/
@@ -178,6 +178,8 @@ Explain the design and why it is acceptable.
       rendered/
       versions/
 ```
+
+The config file may be `planledger.toml` or `.planledger.toml`. `storage.planledger_dir` is resolved relative to the config root when it is a relative path, so sibling storage such as `../planledger-state/planledger` is valid.
 
 ## CLI surface
 

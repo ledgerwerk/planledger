@@ -208,6 +208,13 @@ def _find_config(start: Path) -> tuple[Path, Path] | None:
     return None
 
 
+def _resolve_planledger_dir(root: Path, configured_dir: str) -> Path:
+    configured_path = Path(configured_dir).expanduser()
+    if configured_path.is_absolute():
+        return configured_path.resolve()
+    return (root / configured_path).resolve()
+
+
 def discover_workspace(app_ctx: AppContext) -> Workspace | None:
     start = workspace_root_from_context(app_ctx)
     found = _find_config(start)
@@ -221,7 +228,7 @@ def discover_workspace(app_ctx: AppContext) -> Workspace | None:
         configured_dir = storage_config.get("planledger_dir")
         if isinstance(configured_dir, str) and configured_dir.strip():
             planledger_dir_name = configured_dir.strip()
-    planledger_dir = (root / planledger_dir_name).resolve()
+    planledger_dir = _resolve_planledger_dir(root, planledger_dir_name)
     return Workspace(
         root=root,
         config_path=config_path,
@@ -363,7 +370,7 @@ def initialize_project(
                 "already_initialized",
                 f"Workspace already contains {filename}.",
             )
-    planledger_path = resolved_root / planledger_dir
+    planledger_path = _resolve_planledger_dir(resolved_root, planledger_dir)
     if planledger_path.exists():
         raise PlanledgerError(
             "already_initialized",
@@ -988,21 +995,21 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
     legacy_dir = workspace.planledger_dir / "ledgers" / "main"
     if legacy_dir.exists():
         errors.append(
-            "Old schema detected under .planledger/ledgers/main; "
+            f"Old schema detected under {legacy_dir}; "
             "automatic migration is unsupported."
         )
         warnings.append(
-            "Move the old .planledger directory aside or initialize "
-            "a fresh v2 workspace."
+            f"Move configured storage directory aside ({workspace.planledger_dir}) "
+            "or initialize a fresh v2 workspace."
         )
     if not workspace.storage_path.exists():
-        errors.append("Missing .planledger/storage.yaml.")
+        errors.append(f"Missing storage file: {workspace.storage_path}.")
     else:
         data = storage_data(workspace)
         if int(data.get("schema_version", 0)) != 2:
             errors.append("Unsupported storage schema; expected schema_version 2.")
     if not plans_dir(workspace).exists():
-        errors.append("Missing .planledger/plans/ directory.")
+        errors.append(f"Missing plans directory: {plans_dir(workspace)}.")
     if not errors:
         for plan in list_plans(workspace):
             plan_errors = validate_plan(plan)

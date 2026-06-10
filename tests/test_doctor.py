@@ -62,3 +62,57 @@ def test_status_shows_active_plan(initialized_workspace: Path, invoke) -> None:
     result = invoke(initialized_workspace, "status")
     assert result.exit_code == 0, result.stdout
     assert "Active plan: plan-0001 Active Plan (new)" in result.stdout
+
+
+def test_doctor_reports_configured_external_paths_when_storage_missing(
+    tmp_path: Path, invoke_json
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_path = root / ".planledger.toml"
+    config_path.write_text(
+        "[project]\n"
+        "name = \"External Project\"\n"
+        "uuid = \"test-uuid\"\n\n"
+        "[storage]\n"
+        "planledger_dir = \"../planledger-state/planledger\"\n",
+        encoding="utf-8",
+    )
+
+    result, payload = invoke_json(root, "doctor")
+
+    expected_storage = tmp_path / "planledger-state" / "planledger" / "storage.yaml"
+    expected_plans = tmp_path / "planledger-state" / "planledger" / "plans"
+    errors = payload["result"]["errors"]
+    assert result.exit_code == 0, result.stdout
+    assert payload["result"]["healthy"] is False
+    assert f"Missing storage file: {expected_storage}." in errors
+    assert f"Missing plans directory: {expected_plans}." in errors
+    assert not any(".planledger/storage.yaml" in error for error in errors)
+
+
+def test_status_reports_configured_external_paths_when_storage_missing(
+    tmp_path: Path, invoke_json
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_path = root / ".planledger.toml"
+    config_path.write_text(
+        "[project]\n"
+        "name = \"External Project\"\n"
+        "uuid = \"test-uuid\"\n\n"
+        "[storage]\n"
+        "planledger_dir = \"../planledger-state/planledger\"\n",
+        encoding="utf-8",
+    )
+
+    result, payload = invoke_json(root, "status")
+
+    expected_dir = tmp_path / "planledger-state" / "planledger"
+    assert result.exit_code == 0, result.stdout
+    assert payload["result"]["initialized"] is True
+    assert payload["result"]["storage_ready"] is False
+    assert payload["result"]["config_path"] == str(config_path)
+    assert payload["result"]["planledger_dir"] == str(expected_dir)
+    assert payload["result"]["storage_path"] == str(expected_dir / "storage.yaml")
+    assert payload["result"]["health"]["healthy"] is False

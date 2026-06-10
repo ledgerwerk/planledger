@@ -1,15 +1,18 @@
 Storage layout
 ==============
 
-Planledger stores all data under a ``.planledger/`` directory at the project
-root. The location is configured in ``planledger.toml``.
+Planledger stores all data under the configured Planledger storage directory.
+The location is configured in ``planledger.toml`` or ``.planledger.toml`` under
+``[storage].planledger_dir``. Relative storage paths are resolved from the config
+root, so storage can live outside the source repository, for example
+``../planledger-state/planledger``.
 
 Directory structure
 -------------------
 
 .. code-block:: text
 
-   .planledger/
+   <configured planledger_dir>/
      storage.yaml            # Next plan number counter
      plans/
        plan-0001/
@@ -38,8 +41,8 @@ Workspace discovery
 -------------------
 
 ``planledger.storage.discover_workspace`` walks upward from the current
-directory to find a ``planledger.toml`` file. This identifies the project root
-and the ``.planledger/`` data directory.
+directory to find ``planledger.toml`` or ``.planledger.toml``. This identifies
+the project root and the configured Planledger storage directory.
 
 Version snapshots
 -----------------

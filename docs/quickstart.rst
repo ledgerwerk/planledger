@@ -31,8 +31,10 @@ deliverable.
    # Mark the plan done
    planledger plan status plan-0001 done --reason "Ready for coding agent handoff."
 
-After ``done``, the rendered Markdown artifact lives under
-``.planledger/plans/plan-0001/rendered/``.
+After ``done``, the rendered Markdown artifact lives under the configured
+Planledger storage directory, for example
+``.planledger/plans/plan-0001/rendered/`` or
+``../planledger-state/planledger/plans/plan-0001/rendered/``.
 
 New planning request equals new independent plan unless the user names an existing
 ``plan-000X``. The ``done`` status means the handoff artifact is structurally ready,

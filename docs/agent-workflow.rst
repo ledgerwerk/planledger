@@ -12,7 +12,7 @@ Step 1: Check status and initialize
    planledger --json status
    planledger init
 
-This creates ``.planledger/`` and ``planledger.toml`` at the project root.
+This creates a configured Planledger storage directory and a config file at the project root. The config file may be ``planledger.toml`` or ``.planledger.toml``; the storage directory may be outside the source repository when ``storage.planledger_dir`` points there.
 
 Step 2: Create a plan
 ----------------------

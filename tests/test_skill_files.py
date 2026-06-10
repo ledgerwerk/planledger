@@ -117,6 +117,9 @@ def test_skill_has_taskledger_style_agent_protocol_without_taskledger_scope() ->
         "planledger plan build",
         "planledger plan validate",
         "rendered Markdown",
+        ".planledger.toml",
+        "storage.planledger_dir",
+        "configured Planledger storage directory",
     )
     for phrase in required_phrases:
         assert phrase.lower() in skill.lower(), f"Missing phrase: {phrase}"

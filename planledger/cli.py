@@ -223,10 +223,50 @@ def status(
             message = f"Planledger status\nWorkspace: {root}\nNot initialized."
             return result, message
 
-        data = storage_data(workspace)
+        config = workspace.config.get("project", {})
+        if not isinstance(config, dict):
+            config = {}
+        try:
+            data = storage_data(workspace)
+        except PlanledgerError as error:
+            health_result = {"checked": True, **doctor(workspace)}
+            project_name = str(config.get("name") or workspace.root.name)
+            project_uuid = str(config.get("uuid") or "")
+            result = {
+                "initialized": True,
+                "storage_ready": False,
+                "root": str(workspace.root),
+                "config_path": str(workspace.config_path),
+                "project_name": project_name,
+                "project_uuid": project_uuid,
+                "planledger_dir": str(workspace.planledger_dir),
+                "storage_path": str(workspace.storage_path),
+                "schema_version": None,
+                "plan_count": 0,
+                "status_counts": {},
+                "active_plan": None,
+                "health": health_result,
+                "storage_error": error.to_dict(),
+            }
+            lines = [
+                "Planledger status",
+                f"Workspace: {workspace.root}",
+                f"Config: {workspace.config_path}",
+                f"Planledger dir: {workspace.planledger_dir}",
+            ]
+            if project_name and project_uuid:
+                lines.append(f"Project: {project_name} ({project_uuid})")
+            elif project_name:
+                lines.append(f"Project: {project_name}")
+            lines.append(f"Storage: missing or unreadable ({workspace.storage_path})")
+            lines.append("Active plan: none")
+            lines.append("Counts: plans=0")
+            lines.append("Health: issues found")
+            lines.append("Next: planledger doctor")
+            return result, "\n".join(lines)
+
         project_name = data.get("project_name", "")
         project_uuid = data.get("project_uuid", "")
-        config = workspace.config.get("project", {})
         if not project_name:
             project_name = config.get("name", workspace.root.name)
 

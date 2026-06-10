@@ -25,7 +25,7 @@ Data flow
 1. **CLI** parses arguments and resolves the workspace via
    ``storage.discover_workspace``.
 2. **Storage** reads and writes component files and plan metadata under
-   ``.planledger/``.
+   the configured Planledger storage directory.
 3. **Render** assembles components into a single Markdown document with YAML
    front matter.
 4. **Guardrails** inspects the rendered output to enforce done criteria.

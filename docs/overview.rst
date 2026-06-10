@@ -19,7 +19,7 @@ Product contract
 What it does
 ------------
 
-- Stores independent plans under ``.planledger/plans/plan-0001/``.
+- Stores independent plans under the configured Planledger storage directory.
 - Versions every meaningful plan change.
 - Keeps each plan as modular component files.
 - Renders a standalone Markdown artifact for human or coding-agent handoff.

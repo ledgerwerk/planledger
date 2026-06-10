@@ -26,13 +26,14 @@ Do not use Planledger for implementation tracking, task management, release note
 - Do not create goals, milestones, slices, external task records, implementation runs, validation runs, locks, or handoff records.
 - Do not create more than one plan for one user request unless the user explicitly asks.
 - Do not reuse an old plan for a new planning request unless the user names the existing `plan-000X`.
-- Do not edit `.planledger/` files directly. Use the Planledger CLI.
+- Do not edit the configured Planledger storage directory directly. Use the Planledger CLI.
 - Do not fill the `context` component without inspecting repository files.
 - Do not invent answers to required user questions.
 - Do not set a plan to `done` while required questions are unresolved.
 - Do not set a plan to `done` until required components are complete, `plan build` succeeds, and `plan validate` passes.
 - Do not claim implementation tests passed unless you actually ran them.
 - Do not omit the plan id, version, status, rendered Markdown path, or validation result in the final response.
+- Do not infer that Planledger is uninitialized just because `.planledger/` is absent; `.planledger.toml` and external `storage.planledger_dir` paths are valid.
 
 ## Core agent command path
 
@@ -55,8 +56,8 @@ plan apply
 
 ## Fresh context entry protocol
 
-1. Run `planledger --json status`.
-2. If the workspace is not initialized, run `planledger init`.
+1. Run `planledger --json status`. Treat `result.config_path`, `result.planledger_dir`, and `result.storage_path` as authoritative when present.
+2. If no config is found, run `planledger init`. If config exists but storage is missing, run `planledger doctor` and report the configured missing path; do not claim the config filename is invalid merely because it is `.planledger.toml`.
 3. Run `planledger next-action [--json]` to get the recommended next step for the active plan.
 4. Run `planledger --json plan list` when you need a workspace-wide plan overview.
 5. If the user named a plan id, inspect it with `planledger --json plan show --plan PLAN_ID`.
@@ -70,7 +71,7 @@ plan apply
 2. Create the plan:
    `planledger plan create --title "Short title" --request-file /tmp/request.md`
 3. Inspect repository files relevant to the request.
-4. Write component files outside `.planledger/`.
+4. Write component files outside the configured Planledger storage directory.
 5. Set required components:
    - `summary`
    - `context`

@@ -2,8 +2,10 @@ Plan components
 ===============
 
 Each plan stores modular component files under
-``.planledger/plans/PLAN_ID/components/``. Some components are required for
-the plan to pass validation; others are optional.
+the configured Planledger storage directory, for example
+``.planledger/plans/PLAN_ID/components/`` or
+``../planledger-state/planledger/plans/PLAN_ID/components/``. Some components
+are required for the plan to pass validation; others are optional.
 
 Component reference
 -------------------
