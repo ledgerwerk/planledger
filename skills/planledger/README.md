@@ -13,7 +13,9 @@ cp -R ./skills/planledger ~/.agents/skills/planledger
 
 - creating a new independent plan for each new planning request unless the user names an existing plan id;
 - inspecting repository files before filling plan context;
+- using `--stdin`, `--file -`, or `plan apply --file -` to avoid temporary files;
 - filling todo items with target files, acceptance criteria, and validation commands;
 - building the latest rendered Markdown handoff after changes;
+- exporting the rendered plan to the workspace root with `plan export`;
 - setting plan status to `done` only when guardrails pass and the human approves;
-- reporting plan id, version, status, rendered Markdown path, and validation result.
+- reporting plan id, version, status, rendered storage path, workspace export path, and validation result.

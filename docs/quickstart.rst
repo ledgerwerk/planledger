@@ -36,6 +36,13 @@ Planledger storage directory, for example
 ``.planledger/plans/plan-0001/rendered/`` or
 ``../planledger-state/planledger/plans/plan-0001/rendered/``.
 
+Export the rendered plan to the workspace root so the coding harness can read it:
+
+.. code-block:: bash
+
+   # Writes ./plan-0001.md in the workspace root
+   planledger plan export
+
 New planning request equals new independent plan unless the user names an existing
 ``plan-000X``. The ``done`` status means the handoff artifact is structurally ready,
 not that implementation has been completed.

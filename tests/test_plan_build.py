@@ -77,3 +77,78 @@ def test_build_uses_active_plan(initialized_workspace: Path, invoke) -> None:
     )
     assert result.exit_code == 0, result.stdout
     assert "## Proposed approach" in result.stdout
+
+
+
+def test_export_writes_active_plan_to_workspace_root(
+    initialized_workspace: Path, invoke
+) -> None:
+    create = invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Export me",
+        "--request",
+        "Need a readable handoff.",
+    )
+    assert create.exit_code == 0, create.stdout
+    _fill_required_components(initialized_workspace, invoke)
+
+    before_metadata = yaml.safe_load(
+        (
+            initialized_workspace / ".planledger" / "plans" / "plan-0001" / "plan.yaml"
+        ).read_text()
+    )
+    result = invoke(initialized_workspace, "plan", "export")
+    after_metadata = yaml.safe_load(
+        (
+            initialized_workspace / ".planledger" / "plans" / "plan-0001" / "plan.yaml"
+        ).read_text()
+    )
+
+    exported = initialized_workspace / "plan-0001.md"
+    latest = (
+        initialized_workspace
+        / ".planledger"
+        / "plans"
+        / "plan-0001"
+        / "rendered"
+        / "latest.md"
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Exported plan-0001" in result.stdout
+    assert exported.exists()
+    assert exported.read_text() == latest.read_text()
+    assert before_metadata["version"] == after_metadata["version"]
+
+
+def test_export_relative_out_is_workspace_relative(
+    initialized_workspace: Path, invoke
+) -> None:
+    create = invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Export relative",
+        "--request",
+        "Need a readable handoff.",
+    )
+    assert create.exit_code == 0, create.stdout
+    _fill_required_components(initialized_workspace, invoke)
+
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "export",
+        "--out",
+        "handoffs/current-plan.md",
+    )
+
+    exported = initialized_workspace / "handoffs" / "current-plan.md"
+    assert result.exit_code == 0, result.stdout
+    assert exported.exists()
+    assert str(exported) in result.stdout
+

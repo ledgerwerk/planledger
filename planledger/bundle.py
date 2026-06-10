@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +24,16 @@ STRUCTURED_PLAN_SCHEMA = "planledger.structured_plan.v1"
 
 
 def load_bundle(path: Path) -> dict[str, Any]:
-    try:
-        content = path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise PlanledgerError(
-            "not_found",
-            f"Bundle file does not exist: {path}",
-        ) from exc
+    if path.as_posix() == "-":
+        content = sys.stdin.read()
+    else:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise PlanledgerError(
+                "not_found",
+                f"Bundle file does not exist: {path}",
+            ) from exc
     try:
         loaded = json.loads(content)
     except json.JSONDecodeError as exc:

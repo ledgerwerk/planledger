@@ -32,8 +32,10 @@ Do not use Planledger for implementation tracking, task management, release note
 - Do not set a plan to `done` while required questions are unresolved.
 - Do not set a plan to `done` until required components are complete, `plan build` succeeds, and `plan validate` passes.
 - Do not claim implementation tests passed unless you actually ran them.
-- Do not omit the plan id, version, status, rendered Markdown path, or validation result in the final response.
+- Do not omit the plan id, version, status, rendered Markdown path, workspace export path, or validation result in the final response.
 - Do not infer that Planledger is uninitialized just because `.planledger/` is absent; `.planledger.toml` and external `storage.planledger_dir` paths are valid.
+- Do not skip `plan export` after marking a plan done when the rendered Markdown must be read by the coding harness.
+- Do not create temporary files for multiline component content when `--stdin` or `--file -` is available.
 
 ## Core agent command path
 
@@ -48,6 +50,7 @@ plan create
 plan component list | plan component show
 plan component set | plan component append
 plan build
+plan export
 plan validate
 plan status
 plan versions | plan diff
@@ -67,12 +70,15 @@ plan apply
 
 ## Planning protocol
 
-1. Save the user request to a temporary file.
-2. Create the plan:
-   `planledger plan create --title "Short title" --request-file /tmp/request.md`
-3. Inspect repository files relevant to the request.
-4. Write component files outside the configured Planledger storage directory.
-5. Set required components:
+1. Create the plan:
+   `planledger plan create --title "Short title" --request "Original request"`
+   Or use stdin for the request:
+   `cat <<'MD' | planledger plan create --title "Short title" --stdin`
+2. Inspect repository files relevant to the request.
+3. Populate required components. Prefer `--stdin` or `--file -` for multiline content:
+   - `cat <<'MD' | planledger plan component set summary --stdin --reason "Define summary."`
+   - Or use `plan apply --file -` for multi-component population in one versioned update.
+4. Set required components:
    - `summary`
    - `context`
    - `approach`
@@ -80,17 +86,19 @@ plan apply
    - `target_files`
    - `validation`
    - `risks`
-6. Set optional components when useful:
+5. Set optional components when useful:
    - `open_questions`
    - `assumptions`
    - `rollback`
    - `notes`
-7. Build and validate:
+6. Build and validate:
    - `planledger plan build`
    - `planledger plan validate`
-8. If validation fails, fix the named component and rerun build/validate.
-9. Set status to `done` only after guardrails pass and the human has approved, unless the user explicitly requested a finished handoff artifact now.
-
+7. If validation fails, fix the named component and rerun build/validate.
+8. Set status to `done` only after guardrails pass and the human has approved, unless the user explicitly requested a finished handoff artifact now.
+9. Export the rendered plan to the workspace root:
+   - `planledger plan export`
+   - Include the exported workspace path in the final response.
 ## Question protocol
 
 - If required decisions are missing, write them to `open_questions`, ask the user in chat, and stop.
@@ -161,12 +169,31 @@ planledger plan build
 planledger plan validate
 ```
 
-## Structured bundle protocol
-
 Use `planledger plan apply --file plan.json --dry-run` before applying a bundle.
 
 Use bundles for batch creation/update only when they make the operation clearer than individual component commands.
 
+Prefer `plan apply --file -` for multi-component population without temporary files:
+
+```bash
+cat <<'JSON' | planledger plan apply --file -
+{
+  "schema": "planledger.structured_plan.v1",
+  "operation": "update",
+  "plan_id": "plan-0004",
+  "reason": "Populate implementation handoff plan.",
+  "components": {
+    "summary": "...",
+    "context": "...",
+    "approach": "...",
+    "todo_items": "...",
+    "target_files": "...",
+    "validation": "...",
+    "risks": "..."
+  }
+}
+JSON
+```
 ## Which read command to use
 
 | Need                  | Command                                                |
@@ -182,7 +209,7 @@ Use bundles for batch creation/update only when they make the operation clearer 
 | Read component        | `planledger plan component show COMPONENT`             |
 | Show versions         | `planledger --json plan versions`                      |
 | Compare versions      | `planledger plan diff --from v0001 --to v0002`         |
-
+| Export to workspace   | `planledger plan export [--plan PLAN_ID] [--out PATH]` |
 ## CLI failure protocol
 
 If a Planledger command raises a Python traceback:
@@ -202,12 +229,13 @@ After planning or revision, answer with:
 Plan: plan-000X
 Version: v000Y
 Status: done|in_progress|rework
-Rendered Markdown: PATH
+Rendered storage artifact: PATH
+Workspace export: PATH
 Validation: COMMAND exited STATUS
 Next: approval needed | ready for coding-agent handoff | answer open questions
 ```
 
-Do not paste the entire plan unless the user asks; point to the rendered Markdown artifact.
+Run `planledger plan export` before the final response so the workspace export path is available. Do not paste the entire plan unless the user asks; point to the rendered Markdown artifact and workspace export.
 
 ## Minimal command examples
 
@@ -216,16 +244,25 @@ planledger --json status
 planledger status --check
 planledger init
 planledger --json plan list
-planledger plan create --title "Short title" --request-file /tmp/request.md
-planledger plan component set context --file /tmp/context.md
-planledger plan component set approach --file /tmp/approach.md
-planledger plan component set todo_items --file /tmp/todos.md
-planledger plan component set target_files --file /tmp/target_files.md
-planledger plan component set validation --file /tmp/validation.md
-planledger plan component set risks --file /tmp/risks.md
+planledger plan create --title "Short title" --request "Original request"
+cat <<'MD' | planledger plan component set summary --stdin --reason "Define summary."
+Summary from stdin.
+MD
+cat <<'MD' | planledger plan component set context --stdin
+Context from stdin.
+MD
+planledger plan component set approach --file approach.md
+planledger plan component set todo_items --file todos.md
+planledger plan component set target_files --file target_files.md
+planledger plan component set validation --file validation.md
+planledger plan component set risks --file risks.md
+cat <<'JSON' | planledger plan apply --file -
+{ "schema": "planledger.structured_plan.v1", "operation": "update", "plan_id": "plan-0001", "reason": "Batch update.", "components": { "summary": "..." } }
+JSON
 planledger plan build
 planledger plan validate
 planledger plan status done --reason "Ready for handoff."
+planledger plan export
 planledger plan show --rendered
 planledger plan show --plan plan-0001
 planledger plan activate plan-0001

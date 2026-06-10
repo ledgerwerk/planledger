@@ -57,7 +57,9 @@ planledger plan activate plan-0001
 planledger plan build
 planledger plan validate
 planledger plan status done --reason "Ready for coding agent handoff."
-```
+
+# Export rendered plan to workspace root for the harness
+planledger plan export
 
 New planning request equals new independent plan unless the user names an existing `plan-000X`.
 
@@ -189,7 +191,7 @@ planledger status [--check] [--json]
 planledger doctor [--json]
 planledger next-action [PLAN_ID] [--json]
 
-planledger plan create --title TITLE [--request TEXT | --request-file PATH] [--status new|in_progress]
+planledger plan create --title TITLE [--request TEXT | --request-file PATH | --stdin] [--status new|in_progress]
 planledger plan activate PLAN_ID
 planledger plan list [--status STATUS] [--json]
 planledger plan show [PLAN_ID] [--plan PLAN_ID] [--component KEY] [--rendered] [--json]
@@ -197,13 +199,14 @@ planledger plan status [PLAN_ID] [--plan PLAN_ID] STATUS --reason TEXT
 planledger plan cancel [PLAN_ID] [--plan PLAN_ID] --reason TEXT
 planledger plan component list [PLAN_ID] [--plan PLAN_ID] [--json]
 planledger plan component show COMPONENT [--plan PLAN_ID]
-planledger plan component set COMPONENT [--plan PLAN_ID] (--text TEXT | --file PATH) [--reason TEXT]
-planledger plan component append COMPONENT [--plan PLAN_ID] (--text TEXT | --file PATH) [--reason TEXT]
+planledger plan component set COMPONENT [--plan PLAN_ID] (--text TEXT | --file PATH | --stdin) [--reason TEXT]
+planledger plan component append COMPONENT [--plan PLAN_ID] (--text TEXT | --file PATH | --stdin) [--reason TEXT]
 planledger plan build [PLAN_ID] [--plan PLAN_ID] [--out PATH] [--print] [--include-empty] [--json]
+planledger plan export [PLAN_ID] [--plan PLAN_ID] [--out PATH] [--include-empty] [--json]
 planledger plan validate [PLAN_ID] [--plan PLAN_ID] [--json]
 planledger plan versions [PLAN_ID] [--plan PLAN_ID] [--json]
 planledger plan diff [PLAN_ID] [--plan PLAN_ID] --from v0001 --to v0002
-planledger plan apply --file plan.json [--dry-run]
+planledger plan apply --file PATH_OR_DASH [--dry-run]
 ```
 
 ## Structured bundle workflow
@@ -213,6 +216,33 @@ Agents can create or update plans through `planledger.structured_plan.v1` bundle
 ```bash
 planledger plan apply --file plan.json --dry-run
 planledger plan apply --file plan.json
+```
+
+## Stdin input
+
+Component commands and `plan create` accept `--stdin` and `--file -` for multiline
+input without temporary files:
+
+```bash
+cat <<'MD' | planledger plan component set context --stdin --reason "Record evidence."
+Repository evidence...
+MD
+
+cat <<'JSON' | planledger plan apply --file -
+{ "schema": "planledger.structured_plan.v1", ... }
+JSON
+```
+
+## Plan export
+
+`planledger plan export` writes the rendered Markdown to a workspace-root-relative
+path (default `WORKSPACE_ROOT/PLAN_ID.md`). This is the recommended final handoff
+step because the configured Planledger storage directory may be outside the source
+workspace.
+
+```bash
+planledger plan export --plan plan-0004
+# writes: ./plan-0004.md
 ```
 
 ## Development

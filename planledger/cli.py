@@ -375,13 +375,18 @@ def plan_create(
     request_file: Path | None = typer.Option(
         None,
         "--request-file",
-        help="Request file",
+        help="Request file; use '-' to read from standard input",
+    ),
+    request_stdin: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Read request text from standard input",
     ),
     status: PlanStatus = typer.Option("new", "--status", help="Initial status"),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
-        request_text = read_input_text(request, request_file)
+        request_text = read_input_text(request, request_file, stdin=request_stdin)
         created = create_plan(
             workspace,
             title=title,
@@ -576,7 +581,12 @@ def plan_component_set(
     file: Path | None = typer.Option(
         None,
         "--file",
-        help="Read component content from file",
+        help="Read component content from file; use '-' to read from standard input",
+    ),
+    stdin: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Read component content from standard input",
     ),
     reason: str | None = typer.Option(None, "--reason", help="Reason for the update"),
     force: bool = typer.Option(
@@ -588,7 +598,7 @@ def plan_component_set(
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
         resolved = resolve_plan_id(workspace, explicit=plan_opt)
-        content = read_input_text(text, file)
+        content = read_input_text(text, file, stdin=stdin)
         updated = set_component(
             workspace,
             resolved,
@@ -612,7 +622,12 @@ def plan_component_append(
     file: Path | None = typer.Option(
         None,
         "--file",
-        help="Read component content from file",
+        help="Read component content from file; use '-' to read from standard input",
+    ),
+    stdin: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Read component content from standard input",
     ),
     reason: str | None = typer.Option(None, "--reason", help="Reason for the update"),
     force: bool = typer.Option(
@@ -624,7 +639,7 @@ def plan_component_append(
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
         resolved = resolve_plan_id(workspace, explicit=plan_opt)
-        content = read_input_text(text, file)
+        content = read_input_text(text, file, stdin=stdin)
         updated = append_component(
             workspace,
             resolved,
@@ -662,6 +677,39 @@ def plan_build(
         return built, message
 
     _run_command(ctx, "plan.build", run)
+
+
+@plan_app.command("export")
+def plan_export(
+    ctx: typer.Context,
+    plan_id: str | None = typer.Argument(None, help=ACTIVE_PLAN_HELP),
+    plan_opt: str | None = typer.Option(None, "--plan", help=PLAN_OVERRIDE_HELP),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        help="Export path; defaults to WORKSPACE_ROOT/PLAN_ID.md",
+    ),
+    include_empty: bool = typer.Option(
+        False,
+        "--include-empty",
+        help="Include empty optional sections",
+    ),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        resolved = resolve_plan_id(workspace, explicit=plan_opt, positional=plan_id)
+        output_path = out or Path(f"{resolved}.md")
+        if not output_path.is_absolute():
+            output_path = workspace.root / output_path
+        built = build_plan(
+            workspace,
+            resolved,
+            out=output_path,
+            include_empty=include_empty,
+        )
+        return built, f"Exported {resolved} -> {built['output_path']}"
+
+    _run_command(ctx, "plan.export", run)
 
 
 @plan_app.command("validate")

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from planledger.cli import app
+
 
 def test_setting_component_increments_version_and_snapshots(
     initialized_workspace: Path, invoke
@@ -117,3 +119,90 @@ def test_component_set_plan_option_overrides_active(
         "--plan", "plan-0001", "--text", "For first.",
     )
     assert result.exit_code == 0, result.stdout
+
+
+
+def test_component_set_reads_from_stdin(initialized_workspace: Path, runner) -> None:
+    create = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(initialized_workspace),
+            "plan",
+            "create",
+            "--title",
+            "Use stdin",
+            "--request",
+            "req",
+        ],
+    )
+    update = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(initialized_workspace),
+            "plan",
+            "component",
+            "set",
+            "summary",
+            "--stdin",
+        ],
+        input="Summary from stdin.\n",
+    )
+
+    assert create.exit_code == 0, create.stdout
+    assert update.exit_code == 0, update.stdout
+    summary = (
+        initialized_workspace
+        / ".planledger"
+        / "plans"
+        / "plan-0001"
+        / "components"
+        / "10-executive-verdict.md"
+    ).read_text()
+    assert summary == "Summary from stdin.\n"
+
+
+def test_component_set_file_dash_reads_from_stdin(
+    initialized_workspace: Path, runner
+) -> None:
+    create = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(initialized_workspace),
+            "plan",
+            "create",
+            "--title",
+            "Use dash",
+            "--request",
+            "req",
+        ],
+    )
+    update = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(initialized_workspace),
+            "plan",
+            "component",
+            "set",
+            "context",
+            "--file",
+            "-",
+        ],
+        input="Context from stdin via dash.\n",
+    )
+
+    assert create.exit_code == 0, create.stdout
+    assert update.exit_code == 0, update.stdout
+    context = (
+        initialized_workspace
+        / ".planledger"
+        / "plans"
+        / "plan-0001"
+        / "components"
+        / "20-context.md"
+    ).read_text()
+    assert context == "Context from stdin via dash.\n"
+

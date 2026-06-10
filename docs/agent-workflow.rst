@@ -32,13 +32,29 @@ Inspect the repository, collect evidence, and set each component:
 
 .. code-block:: bash
 
-   planledger plan component set plan-0001 context --file context.md
-   planledger plan component set plan-0001 approach --file approach.md
-   planledger plan component set plan-0001 todo_items --file todos.md
-   planledger plan component set plan-0001 target_files --file targets.md
-   planledger plan component set plan-0001 validation --file validation.md
-   planledger plan component set plan-0001 risks --file risks.md
+   # Set components individually using stdin or files
+   cat <<'MD' | planledger plan component set plan-0001 context --stdin
+   Repository evidence...
+   MD
 
+   # Or populate many components in one versioned update
+   cat <<'JSON' | planledger plan apply --file -
+   {
+     "schema": "planledger.structured_plan.v1",
+     "operation": "update",
+     "plan_id": "plan-0001",
+     "reason": "Populate required components.",
+     "components": {
+       "summary": "Ready for implementation.",
+       "context": "Repository evidence...",
+       "approach": "Implementation sequence...",
+       "todo_items": "### TODO-001: ...",
+       "target_files": "- [`src/file.py`](src/file.py)",
+       "validation": "- `python -m pytest -q`",
+       "risks": "- Risk: ..."
+     }
+   }
+   JSON
 Step 4: Build and validate
 ---------------------------
 
@@ -61,6 +77,17 @@ Step 5: Mark done and hand off
 
 The ``done`` status means the handoff artifact is structurally ready.
 The rendered Markdown artifact is the handoff deliverable.
+
+Step 6: Export the rendered plan
+---------------------------------
+
+Export the rendered plan to a workspace-root-relative path so the
+coding harness can find it without knowing the Planledger storage directory:
+
+.. code-block:: bash
+
+   planledger plan export --plan plan-0001
+   # writes: ./plan-0001.md
 
 Structured bundle workflow
 --------------------------

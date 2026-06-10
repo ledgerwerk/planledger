@@ -119,18 +119,34 @@ def component_spec(component: str) -> ComponentSpec:
         ) from exc
 
 
-def read_input_text(text: str | None, file_path: Path | None) -> str:
-    if text is None and file_path is None:
+def read_input_text(
+    text: str | None,
+    file_path: Path | None,
+    *,
+    stdin: bool = False,
+) -> str:
+    selected_sources = sum(
+        (
+            text is not None,
+            file_path is not None,
+            stdin,
+        )
+    )
+    if selected_sources == 0:
         raise PlanledgerError(
             "missing_input",
-            "Provide either --text or --file.",
+            "Provide exactly one of --text, --file, or --stdin.",
         )
-    if text is not None and file_path is not None:
+    if selected_sources > 1:
         raise PlanledgerError(
             "invalid_options",
-            "Use exactly one of --text or --file.",
+            "Use exactly one of --text, --file, or --stdin.",
         )
+    if stdin:
+        return sys.stdin.read()
     if file_path is not None:
+        if file_path.as_posix() == "-":
+            return sys.stdin.read()
         try:
             return file_path.read_text(encoding="utf-8")
         except FileNotFoundError as exc:

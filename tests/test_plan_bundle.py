@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from planledger.cli import app
 from planledger.storage import initialize_project, load_component_content, load_plan
 
 
@@ -103,3 +104,39 @@ def test_bundle_validation_rejects_unknown_components_and_invalid_statuses(
     assert result.exit_code != 0
     assert "invalid" in result.stdout.lower()
     assert "unknown component key" in result.stdout.lower()
+
+
+
+def test_plan_apply_reads_bundle_from_stdin(tmp_path: Path, runner) -> None:
+    init = runner.invoke(
+        app,
+        ["--cwd", str(tmp_path), "init", "--project-name", "Bundle Stdin"],
+    )
+    bundle = {
+        "schema": "planledger.structured_plan.v1",
+        "operation": "create",
+        "plan": {
+            "title": "Bundle stdin",
+            "request": "Create from stdin.",
+            "components": {
+                "summary": "Created through stdin bundle.",
+            },
+        },
+    }
+    apply = runner.invoke(
+        app,
+        ["--cwd", str(tmp_path), "plan", "apply", "--file", "-"],
+        input=json.dumps(bundle),
+    )
+
+    assert init.exit_code == 0, init.stdout
+    assert apply.exit_code == 0, apply.stdout
+    assert (
+        tmp_path
+        / ".planledger"
+        / "plans"
+        / "plan-0001"
+        / "components"
+        / "10-executive-verdict.md"
+    ).read_text() == "Created through stdin bundle."
+
