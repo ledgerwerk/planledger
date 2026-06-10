@@ -20,6 +20,10 @@ Planledger stores independent, structured, versioned implementation plans and re
 
 planledger is not a task manager, does not store goals, and has no external task-manager integration.
 
+## Release maturity
+
+Planledger is currently a beta package (`Development Status :: 4 - Beta`). It is intended for planning-only workflows and standalone handoff artifacts. Beta status means the project is suitable for early adopter use, but releases should pass the documented maintainer gate before publication.
+
 ## Install
 
 ```bash

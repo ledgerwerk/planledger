@@ -229,7 +229,7 @@ def status(
         try:
             data = storage_data(workspace)
         except PlanledgerError as error:
-            health_result = {"checked": True, **doctor(workspace)}
+            recovery_health: dict[str, Any] = {"checked": True, **doctor(workspace)}
             project_name = str(config.get("name") or workspace.root.name)
             project_uuid = str(config.get("uuid") or "")
             result = {
@@ -245,7 +245,7 @@ def status(
                 "plan_count": 0,
                 "status_counts": {},
                 "active_plan": None,
-                "health": health_result,
+                "health": recovery_health,
                 "storage_error": error.to_dict(),
             }
             lines = [

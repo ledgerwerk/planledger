@@ -55,6 +55,7 @@ Inspect the repository, collect evidence, and set each component:
      }
    }
    JSON
+
 Step 4: Build and validate
 ---------------------------
 

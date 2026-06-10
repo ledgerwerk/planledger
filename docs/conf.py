@@ -2,7 +2,15 @@ import os
 import sys
 from importlib import metadata
 
+from docutils.parsers.rst.directives import html as docutils_html_directives
+from docutils.parsers.rst.directives import misc as docutils_misc_directives
+
 sys.path.insert(0, os.path.abspath(".."))
+if (
+    not hasattr(docutils_misc_directives, "Meta")
+    and hasattr(docutils_html_directives, "Meta")
+):
+    docutils_misc_directives.Meta = docutils_html_directives.Meta
 
 project = "planledger"
 copyright = "2026, Planledger Contributors"
