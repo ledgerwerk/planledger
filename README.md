@@ -1,3 +1,8 @@
+[![PyPI - Version](https://img.shields.io/pypi/v/planledger)](https://pypi.org/project/planledger/)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/planledger)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/planledger)
+[![codecov](https://codecov.io/gh/holgern/taskledger/graph/badge.svg?token=6usFHwM5Ul)](https://codecov.io/gh/holgern/taskledger)
+
 # planledger
 
 Planledger stores independent, structured, versioned implementation plans and renders each plan into one standalone rendered Markdown handoff file.
