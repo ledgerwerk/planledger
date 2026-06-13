@@ -138,3 +138,66 @@ def test_plan_apply_reads_bundle_from_stdin(tmp_path: Path, runner) -> None:
         / "components"
         / "10-executive-verdict.md"
     ).read_text() == "Created through stdin bundle."
+
+
+def test_bundle_update_accepts_global_ref_and_dry_run_returns_derived_ref(
+    tmp_path: Path,
+    invoke_json,
+) -> None:
+    workspace = initialize_project(tmp_path, "Test Project")
+    create_bundle = {
+        "schema": "planledger.structured_plan.v1",
+        "operation": "create",
+        "plan": {"title": "Bundle refs", "request": "Create a plan."},
+    }
+    create_path = tmp_path / "create-ref.json"
+    create_path.write_text(json.dumps(create_bundle), encoding="utf-8")
+    created, _ = invoke_json(tmp_path, "plan", "apply", "--file", str(create_path))
+    assert created.exit_code == 0, created.stdout
+
+    update_bundle = {
+        "schema": "planledger.structured_plan.v1",
+        "operation": "update",
+        "plan_id": "pl:plan-0001",
+        "reason": "Use a global selector.",
+        "components": {"summary": "Updated through a global ref."},
+    }
+    update_path = tmp_path / "update-ref.json"
+    update_path.write_text(json.dumps(update_bundle), encoding="utf-8")
+    dry_run, payload = invoke_json(
+        tmp_path,
+        "plan",
+        "apply",
+        "--file",
+        str(update_path),
+        "--dry-run",
+    )
+
+    assert dry_run.exit_code == 0, dry_run.stdout
+    assert payload["result"]["plan_id"] == "plan-0001"
+    assert payload["result"]["global_ref"] == "pl:plan-0001"
+    assert load_plan(workspace, "plan-0001").version == 1
+
+
+def test_bundle_update_rejects_foreign_ref(tmp_path: Path, invoke_json) -> None:
+    initialize_project(tmp_path, "Test Project")
+    bundle = {
+        "schema": "planledger.structured_plan.v1",
+        "operation": "update",
+        "plan_id": "tl:task-0001",
+        "reason": "Invalid foreign ref.",
+    }
+    path = tmp_path / "foreign-ref.json"
+    path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    result, payload = invoke_json(
+        tmp_path,
+        "plan",
+        "apply",
+        "--file",
+        str(path),
+        "--dry-run",
+    )
+
+    assert result.exit_code != 0
+    assert payload["error"]["code"] == "invalid_bundle"

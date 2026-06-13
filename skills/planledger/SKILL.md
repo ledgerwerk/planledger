@@ -36,6 +36,7 @@ Do not use Planledger for implementation tracking, task management, release note
 - Do not infer that Planledger is uninitialized just because `.planledger/` is absent; `.planledger.toml` and external `storage.planledger_dir` paths are valid.
 - Do not skip `plan export` after marking a plan done when the rendered Markdown must be read by the coding harness.
 - Do not create temporary files for multiline component content when `--stdin` or `--file -` is available.
+- Do not store or recommend a `global_id`; Planledger derives global references.
 
 ## Core agent command path
 
@@ -67,6 +68,17 @@ plan apply
 6. If the user did not name a plan id and requested new planning work, create a new independent plan. The new plan becomes active.
 7. If revising an existing plan, inspect the active plan with `planledger plan show` or use `--plan PLAN_ID` for a specific plan.
 8. Use repository inspection before writing `context`.
+
+## Plan reference protocol
+
+- Use local `plan-000X` ids for normal CLI commands and storage paths.
+- Use canonical `pl:plan-000X` refs when referencing a plan globally.
+- Plan selectors also accept `pl-plan-000X` and uppercase file aliases.
+- Treat uppercase aliases as input compatibility only; canonical output is lowercase.
+- Global refs follow `<ledger>:<kind>-<number>`, for example `tl:task-0001`,
+  `al:adr-0002`, `sw:spec-0003`, and `pl:plan-0004`.
+- Cross-ledger refs are identifiers or links only. They do not make Planledger
+  a task manager or external task-manager integration.
 
 ## Planning protocol
 
@@ -230,6 +242,7 @@ After planning or revision, answer with:
 
 ```text
 Plan: plan-000X
+Global ref: pl:plan-000X
 Version: v000Y
 Status: done|in_progress|rework
 Rendered storage artifact: PATH

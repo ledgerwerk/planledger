@@ -16,6 +16,11 @@ Project setup
 Plan management
 ---------------
 
+Plan selectors accept local ids (``plan-0001``), canonical global refs
+(``pl:plan-0001``), file aliases (``pl-plan-0001``), and uppercase file aliases.
+Output always uses lowercase canonical refs. Foreign refs such as
+``tl:task-0001`` are rejected.
+
 .. code-block:: text
 
    planledger plan create --title TITLE [--request TEXT | --request-file PATH | --stdin] [--status new|in_progress]
@@ -54,6 +59,9 @@ bundles:
 .. code-block:: text
 
    planledger plan apply --file PATH_OR_DASH [--dry-run]
+
+For update bundles, ``plan_id`` accepts either a local id or a Planledger ref.
+The schema and field name remain unchanged.
 
 Stdin input
 ------------

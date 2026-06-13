@@ -8,6 +8,10 @@ Development setup
 
    pip install -e .
 
+The editable install resolves the released ``ledgercore>=0.1.0,<0.2`` runtime
+dependency. Do not commit a path or editable Ledgercore dependency in package
+metadata.
+
 Running tests
 -------------
 

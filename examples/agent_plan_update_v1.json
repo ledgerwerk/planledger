@@ -1,7 +1,7 @@
 {
   "schema": "planledger.structured_plan.v1",
   "operation": "update",
-  "plan_id": "plan-0001",
+  "plan_id": "pl:plan-0001",
   "reason": "Human requested a clearer second todo item.",
   "components": {
     "todo_items": "### TODO-001: Implement feature A\n\n**Target files**\n\n- [`planledger/cli.py`](planledger/cli.py)\n\n**Acceptance criteria**\n\n- [ ] CLI exposes the new behavior.\n\n**Validation**\n\n- `python -m pytest -q`\n\n### TODO-002: Document feature A\n\n**Target files**\n\n- [`README.md`](README.md)\n\n**Acceptance criteria**\n\n- [ ] README has a minimal usage example.\n\n**Validation**\n\n- `python -m pytest tests/test_skill_files.py -q`"

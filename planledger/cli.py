@@ -405,7 +405,10 @@ def plan_list(
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
-        plans = [plan_to_dict(plan) for plan in list_plans(workspace, status=status)]
+        plans = [
+            plan_to_dict(plan, ledger_code=workspace.ledger_code)
+            for plan in list_plans(workspace, status=status)
+        ]
         if not plans:
             return {"plans": []}, "No plans found."
         lines = [
@@ -427,9 +430,10 @@ def plan_activate(
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
-        plan = activate_plan(workspace, plan_id)
-        result = plan_to_dict(plan)
-        return result, f"Activated {plan_id} ({plan.title})."
+        resolved = resolve_plan_id(workspace, positional=plan_id)
+        plan = activate_plan(workspace, resolved)
+        result = plan_to_dict(plan, ledger_code=workspace.ledger_code)
+        return result, f"Activated {resolved} ({plan.title})."
 
     _run_command(ctx, "plan.activate", run)
 
@@ -455,7 +459,7 @@ def plan_show(
                 "invalid_options",
                 "Use either --component or --rendered, not both.",
             )
-        result = plan_to_dict(plan_obj)
+        result = plan_to_dict(plan_obj, ledger_code=workspace.ledger_code)
         if component is not None:
             component_spec(component)
             content = load_component_content(plan_obj, component)

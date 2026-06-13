@@ -22,6 +22,12 @@ class Workspace:
     storage_path: Path
     config: dict[str, Any]
 
+    @property
+    def ledger_code(self) -> str:
+        from planledger.identity import ledger_code_from_config
+
+        return ledger_code_from_config(self.config)
+
 
 @dataclass
 class ComponentSpec:

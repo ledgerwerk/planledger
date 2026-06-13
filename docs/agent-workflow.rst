@@ -25,6 +25,10 @@ names an existing ``plan-000X``:
    planledger plan create --title "Short description" \
        --request "Full request text"
 
+Use local ids in normal CLI examples. Global selectors such as
+``pl:plan-0001`` are accepted when a plan is referenced across ledgers. The
+canonical global ref is derived and does not create task-manager integration.
+
 Step 3: Populate components
 ----------------------------
 

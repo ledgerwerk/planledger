@@ -27,3 +27,12 @@ What it does
 
 Planledger is not a task manager, does not store goals, and has no external
 task-manager integration.
+
+Plan identity
+-------------
+
+A plan stores a local id such as ``plan-0001``. Planledger derives the canonical
+global ref ``pl:plan-0001`` and file ref ``pl-plan-0001`` from the configured
+ledger code. Global refs follow ``<ledger>:<kind>-<number>``. Uppercase file
+aliases are accepted as input compatibility, but canonical output is lowercase.
+These refs are identifiers only and do not add task-manager integration.

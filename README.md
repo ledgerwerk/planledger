@@ -25,6 +25,24 @@ Planledger stores independent, structured, versioned implementation plans and re
 
 planledger is not a task manager, does not store goals, and has no external task-manager integration.
 
+## Plan identity
+
+Each plan has a stored local ID and derived cross-ledger references:
+
+```text
+local ID:  plan-0001
+global ref: pl:plan-0001
+file ref:   pl-plan-0001
+```
+
+Canonical global references use `<ledger>:<kind>-<number>`, such as
+`tl:task-0001`, `al:adr-0002`, `sw:spec-0003`, and `pl:plan-0004`.
+File aliases such as `pl-plan-0001` are accepted as selectors. Uppercase aliases
+are input compatibility only; Planledger always emits lowercase canonical refs.
+The global and file refs are derived from the configured ledger code and local
+ID, not stored as a second identity source. Cross-ledger refs are identifiers,
+not task-manager integration.
+
 ## Release maturity
 
 Planledger is currently a beta package (`Development Status :: 4 - Beta`). It is intended for planning-only workflows and standalone handoff artifacts. Beta status means the project is suitable for early adopter use, but releases should pass the documented maintainer gate before publication.
@@ -61,6 +79,9 @@ planledger plan component set risks --file risks.md
 # Override the active plan when needed
 planledger plan show --plan plan-0001
 planledger plan activate plan-0001
+# Global and file selectors are also accepted:
+planledger plan show pl:plan-0001
+planledger plan show pl-plan-0001
 
 # Build, validate, mark done
 planledger plan build
@@ -132,6 +153,11 @@ Each plan stores these components:
 ---
 planledger_schema: planledger.rendered_plan.v1
 plan_id: plan-0003
+id: plan-0003
+kind: plan
+ledger_code: pl
+global_ref: pl:plan-0003
+file_ref: pl-plan-0003
 title: Add feature A
 status: done
 version: 5
@@ -141,6 +167,7 @@ generated_at: 2026-06-09T12:00:00Z
 # Add feature A
 
 Plan: `plan-0003`
+Ref: `pl:plan-0003`
 Version: `v0005`
 Status: `done`
 
@@ -191,6 +218,22 @@ Explain the design and why it is acceptable.
 ```
 
 The config file may be `planledger.toml` or `.planledger.toml`. `storage.planledger_dir` is resolved relative to the config root when it is a relative path, so sibling storage such as `../planledger-state/planledger` is valid.
+
+```toml
+[ledger]
+code = "pl"
+name = "planledger"
+
+[project]
+name = "my-project"
+uuid = "..."
+
+[storage]
+planledger_dir = "../planledger-state/planledger"
+```
+
+Configs without `[ledger]` remain valid and default to code `pl` and name
+`planledger`.
 
 ## CLI surface
 

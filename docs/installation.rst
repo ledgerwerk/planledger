@@ -5,6 +5,7 @@ Prerequisites
 -------------
 
 - Python 3.10 or later.
+- Ledgercore 0.1.x (installed automatically as a runtime dependency).
 
 Editable install
 ----------------

@@ -30,6 +30,7 @@ license = "Apache-2.0"
 keywords = ["cli", "durable-state", "planning", "developer-tools", "workflows"]
 dependencies = [
     "typer",
+    "ledgercore>=0.1.0,<0.2",
     "PyYAML",
     'tomli; python_version < "3.11"',
 ]

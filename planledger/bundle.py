@@ -5,8 +5,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from ledgercore.errors import IdFormatError
+
 from planledger.errors import PlanledgerError
 from planledger.guardrails import validate_handoff_contents
+from planledger.identity import normalize_plan_selector, plan_ref
 from planledger.render import build_plan
 from planledger.storage import (
     VALID_STATUSES,
@@ -144,6 +147,11 @@ def _validate_update_bundle(
     )
     if workspace is None or errors:
         return
+    try:
+        plan_id = normalize_plan_selector(plan_id, ledger_code=workspace.ledger_code)
+    except IdFormatError:
+        errors.append(f"Invalid plan reference {plan_id!r}.")
+        return
     plan = load_plan(workspace, plan_id)
     if plan.status == "cancelled" and bundle.get("force") is not True:
         errors.append("Update targets a cancelled plan without --force.")
@@ -192,10 +200,14 @@ def apply_structured_plan_bundle(
         components = plan_section.get("components", {})
         assert isinstance(components, dict)
         if dry_run:
+            plan_id = preview_plan_id(workspace)
+            ref = plan_ref(plan_id, ledger_code=workspace.ledger_code)
             return {
                 "operation": "create",
                 "dry_run": True,
-                "plan_id": preview_plan_id(workspace),
+                "plan_id": plan_id,
+                "global_ref": ref.global_ref,
+                "file_ref": ref.file_ref,
                 "title": str(plan_section["title"]),
                 "status": str(plan_section.get("status", "new")),
                 "component_keys": sorted(components),
@@ -213,16 +225,22 @@ def apply_structured_plan_bundle(
             "dry_run": False,
             "plan": built,
         }
-    plan_id = str(bundle["plan_id"])
+    plan_id = normalize_plan_selector(
+        str(bundle["plan_id"]),
+        ledger_code=workspace.ledger_code,
+    )
     reason = str(bundle["reason"])
     components = bundle.get("components", {})
     assert isinstance(components, dict)
     plan_before = load_plan(workspace, plan_id)
     if dry_run:
+        ref = plan_ref(plan_id, ledger_code=workspace.ledger_code)
         return {
             "operation": "update",
             "dry_run": True,
             "plan_id": plan_id,
+            "global_ref": ref.global_ref,
+            "file_ref": ref.file_ref,
             "current_version": plan_before.version,
             "next_version": plan_before.version + 1,
             "status": bundle.get("status", plan_before.status),

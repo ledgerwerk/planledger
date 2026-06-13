@@ -1,26 +1,37 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import shutil
 import sys
 from collections.abc import Iterable
-from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Any
 from uuid import uuid4
 
-import yaml
+from ledgercore.atomic import atomic_write_text
+from ledgercore.errors import AtomicWriteError, IdFormatError, YamlStoreError
+from ledgercore.io import content_hash
+from ledgercore.paths import locate_config
+from ledgercore.time import utc_now_iso
+from ledgercore.yamlio import load_yaml_object, write_yaml
 
 from planledger.errors import PlanledgerError
 from planledger.guardrails import validate_handoff_contents
+from planledger.identity import (
+    DEFAULT_LEDGER_CODE,
+    DEFAULT_LEDGER_NAME,
+    PLAN_KIND,
+    format_plan_id,
+    ledger_code_from_config,
+    normalize_plan_selector,
+    plan_ref,
+)
 from planledger.models import AppContext, ComponentSpec, Plan, PlanStatus, Workspace
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 
 PLANLEDGER_CONFIG_FILENAMES: tuple[str, str] = ("planledger.toml", ".planledger.toml")
@@ -70,12 +81,7 @@ COMPONENT_DEFINITIONS: tuple[tuple[str, str, str, int, bool], ...] = (
 
 
 def now_iso() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return utc_now_iso()
 
 
 def version_label(version: int) -> str:
@@ -164,38 +170,39 @@ def workspace_root_from_context(app_ctx: AppContext) -> Path:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=path.parent,
-        delete=False,
-    ) as handle:
-        handle.write(content)
-        temp_path = Path(handle.name)
-    temp_path.replace(path)
+    try:
+        atomic_write_text(path, content, normalize=True)
+    except AtomicWriteError as exc:
+        raise PlanledgerError(
+            "storage_error",
+            f"Failed to write {path}.",
+        ) from exc
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
-    _atomic_write(path, yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    try:
+        write_yaml(path, data, sort_keys=False)
+    except (AtomicWriteError, YamlStoreError) as exc:
+        raise PlanledgerError(
+            "storage_error",
+            f"Failed to write YAML file {path}.",
+        ) from exc
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
+    if not path.exists():
         raise PlanledgerError(
             "not_found",
             f"Required file does not exist: {path}",
-        ) from exc
-    if loaded is None:
-        return {}
-    if not isinstance(loaded, dict):
+        )
+    try:
+        loaded = load_yaml_object(path, label=f"YAML file {path}")
+    except YamlStoreError as exc:
         raise PlanledgerError(
             "invalid_yaml",
             f"Expected a mapping in {path}.",
-        )
-    return loaded
+        ) from exc
+    return dict(loaded)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -216,12 +223,10 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 
 def _find_config(start: Path) -> tuple[Path, Path] | None:
-    for candidate in (start, *start.parents):
-        for name in PLANLEDGER_CONFIG_FILENAMES:
-            config_path = candidate / name
-            if config_path.exists():
-                return candidate, config_path
-    return None
+    locator = locate_config(start, PLANLEDGER_CONFIG_FILENAMES)
+    if locator is None:
+        return None
+    return locator.workspace_root, locator.config_path
 
 
 def _resolve_planledger_dir(root: Path, configured_dir: str) -> Path:
@@ -315,13 +320,13 @@ def save_storage_data(workspace: Workspace, data: dict[str, Any]) -> None:
 def preview_plan_id(workspace: Workspace) -> str:
     data = storage_data(workspace)
     next_plan_id = int(data.get("next_plan_id", 1))
-    return f"plan-{next_plan_id:04d}"
+    return format_plan_id(next_plan_id)
 
 
 def allocate_plan_id(workspace: Workspace) -> str:
     data = storage_data(workspace)
     next_plan_id = int(data.get("next_plan_id", 1))
-    plan_id = f"plan-{next_plan_id:04d}"
+    plan_id = format_plan_id(next_plan_id)
     data["next_plan_id"] = next_plan_id + 1
     data["updated_at"] = now_iso()
     save_storage_data(workspace, data)
@@ -352,10 +357,9 @@ def resolve_plan_id(
     positional: str | None = None,
 ) -> str:
     """Resolve plan id from --plan, positional arg, or active plan."""
-    if explicit is not None:
-        return explicit
-    if positional is not None:
-        return positional
+    raw = explicit if explicit is not None else positional
+    if raw is not None:
+        return _normalize_plan_id(workspace, raw)
     active = get_active_plan_id(workspace)
     if active is not None:
         return active
@@ -396,6 +400,10 @@ def initialize_project(
     project_uuid = str(uuid4())
     timestamp = now_iso()
     config: dict[str, Any] = {
+        "ledger": {
+            "code": DEFAULT_LEDGER_CODE,
+            "name": DEFAULT_LEDGER_NAME,
+        },
         "project": {
             "name": project_name,
             "uuid": project_uuid,
@@ -428,6 +436,14 @@ def initialize_project(
 
 def _toml_dump(data: dict[str, Any]) -> str:
     lines: list[str] = []
+    ledger = data.get("ledger", {})
+    if isinstance(ledger, dict):
+        lines.append("[ledger]")
+        for key in ("code", "name"):
+            value = ledger.get(key)
+            if isinstance(value, str):
+                lines.append(f'{key} = "{value}"')
+        lines.append("")
     project = data.get("project", {})
     if isinstance(project, dict):
         lines.append("[project]")
@@ -447,7 +463,24 @@ def _toml_dump(data: dict[str, Any]) -> str:
 
 
 def _hash_text(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return content_hash(content)
+
+
+def _normalize_plan_id(workspace: Workspace, value: str) -> str:
+    try:
+        return normalize_plan_selector(
+            value,
+            ledger_code=ledger_code_from_config(workspace.config),
+        )
+    except IdFormatError as exc:
+        raise PlanledgerError(
+            "invalid_plan_ref",
+            f"Invalid plan reference {value!r}.",
+            remediation=[
+                "Use a local plan id such as plan-0001.",
+                "Or use a Planledger global ref such as pl:plan-0001.",
+            ],
+        ) from exc
 
 
 def _plan_from_metadata(plan_path: Path, metadata: dict[str, Any]) -> Plan:
@@ -519,7 +552,12 @@ def _write_plan_metadata(plan: Plan) -> None:
     _write_yaml(plan_metadata_path_from_dir(plan.path), plan.metadata)
 
 
+def save_plan_metadata(plan: Plan) -> None:
+    _write_plan_metadata(plan)
+
+
 def load_plan(workspace: Workspace, plan_id: str) -> Plan:
+    plan_id = _normalize_plan_id(workspace, plan_id)
     target_dir = plan_dir(workspace, plan_id)
     if not target_dir.exists():
         raise PlanledgerError(
@@ -670,6 +708,7 @@ def create_plan(
     metadata: dict[str, Any] = {
         "schema_version": 2,
         "id": plan_id,
+        "kind": PLAN_KIND,
         "type": "plan",
         "title": title,
         "status": validated_status,
@@ -973,9 +1012,19 @@ def _snapshot_files(snapshot_dir: Path) -> dict[str, list[str]]:
     return results
 
 
-def plan_to_dict(plan: Plan) -> dict[str, Any]:
+def plan_to_dict(
+    plan: Plan,
+    *,
+    ledger_code: str = DEFAULT_LEDGER_CODE,
+) -> dict[str, Any]:
+    ref = plan_ref(plan.plan_id, ledger_code=ledger_code)
     return {
         "plan_id": plan.plan_id,
+        "id": plan.plan_id,
+        "kind": PLAN_KIND,
+        "ledger_code": ref.ledger,
+        "global_ref": ref.global_ref,
+        "file_ref": ref.file_ref,
         "title": plan.title,
         "status": plan.status,
         "version": plan.version,

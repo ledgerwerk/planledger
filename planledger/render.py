@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from planledger.errors import PlanledgerError
+from planledger.identity import DEFAULT_LEDGER_CODE, PLAN_KIND, plan_ref
 from planledger.models import Plan
 from planledger.storage import (
     Workspace,
@@ -15,6 +16,7 @@ from planledger.storage import (
     now_iso,
     ordered_component_keys,
     plan_to_dict,
+    save_plan_metadata,
     validate_plan,
     version_label,
     versioned_rendered_path,
@@ -28,11 +30,18 @@ def render_plan_markdown(
     *,
     include_empty: bool = False,
     generated_at: str | None = None,
+    ledger_code: str = DEFAULT_LEDGER_CODE,
 ) -> str:
     timestamp = generated_at or now_iso()
+    ref = plan_ref(plan.plan_id, ledger_code=ledger_code)
     header = {
         "planledger_schema": RENDERED_PLAN_SCHEMA,
         "plan_id": plan.plan_id,
+        "id": plan.plan_id,
+        "kind": PLAN_KIND,
+        "ledger_code": ref.ledger,
+        "global_ref": ref.global_ref,
+        "file_ref": ref.file_ref,
         "title": plan.title,
         "status": plan.status,
         "version": plan.version,
@@ -51,6 +60,7 @@ def render_plan_markdown(
         f"# {plan.title}",
         "",
         f"Plan: `{plan.plan_id}`  ",
+        f"Ref: `{ref.global_ref}`  ",
         f"Version: `{version_label(plan.version)}`  ",
         f"Status: `{plan.status}`",
         "",
@@ -112,6 +122,7 @@ def build_plan(
         plan,
         include_empty=include_empty,
         generated_at=generated_at,
+        ledger_code=workspace.ledger_code,
     )
     rendered_path = versioned_rendered_path(plan)
     rendered_path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,11 +139,11 @@ def build_plan(
         "path": rendered_path.relative_to(plan.path).as_posix(),
         "generated_at": generated_at,
     }
-    (plan.path / "plan.yaml").write_text(
-        yaml.safe_dump(plan.metadata, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
+    save_plan_metadata(plan)
+    result = plan_to_dict(
+        load_plan(workspace, plan_id),
+        ledger_code=workspace.ledger_code,
     )
-    result = plan_to_dict(load_plan(workspace, plan_id))
     result.update(
         {
             "generated_at": generated_at,

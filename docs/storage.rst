@@ -7,6 +7,17 @@ The location is configured in ``planledger.toml`` or ``.planledger.toml`` under
 root, so storage can live outside the source repository, for example
 ``../planledger-state/planledger``.
 
+New configs include ledger identity:
+
+.. code-block:: toml
+
+   [ledger]
+   code = "pl"
+   name = "planledger"
+
+Configs without this block remain valid and use those defaults. Absolute paths
+and sibling paths containing ``..`` remain supported.
+
 Directory structure
 -------------------
 
@@ -27,9 +38,13 @@ plan.yaml
 Each plan directory contains a ``plan.yaml`` with:
 
 - ``id``: plan identifier (e.g. ``plan-0001``).
+- ``kind``: normalized resource kind, always ``plan``.
 - ``title``: human-readable title.
 - ``status``: current lifecycle status.
 - ``version``: integer version counter, incremented on each component change.
+
+``global_ref`` and ``file_ref`` are derived for JSON and rendered Markdown.
+They are not stored in ``plan.yaml`` or ``storage.yaml``.
 
 storage.yaml
 ------------

@@ -27,6 +27,9 @@ def test_skill_describes_plan_only_workflow() -> None:
     assert "implementation_steps" not in skill
     assert "snapshot export" not in skill
     assert "taskledger tasks" not in skill
+    assert "pl:plan-000X" in skill
+    assert "global_id" in skill
+    assert "Do not store or recommend a `global_id`" in skill
 
 
 def test_config_has_no_taskledger_integration() -> None:
@@ -34,6 +37,7 @@ def test_config_has_no_taskledger_integration() -> None:
 
     assert "integrations.taskledger" not in config
     assert "ledger_ref" not in config
+    assert 'code = "pl"' in config
 
 
 def test_examples_use_current_schema() -> None:
