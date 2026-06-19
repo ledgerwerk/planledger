@@ -11,7 +11,32 @@ Project setup
 
    planledger init [--project-name NAME] [--planledger-dir .planledger] [--hidden-config]
    planledger status [--json]
+   planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
    planledger doctor [--json]
+
+``planledger info`` prints a read-only inventory of everything planledger has
+stored: workspace and storage paths, schema version and id counters, the active
+plan/workshop, and every plan and workshop with status, version, component
+fill-state (whether each component file is non-empty), rendered artifact path,
+versions, and disk size. It reports resolved absolute paths from the
+``Workspace`` object and never writes or migrates storage, so it is safe to run
+against external storage.
+
+Use ``planledger status`` for a quick health/counts snapshot plus the active
+plan; use ``planledger info`` for the full stored inventory and per-component
+fill-state.
+
+.. code-block:: bash
+
+   planledger info                       # full human inventory
+   planledger --json info                # machine-readable inventory envelope
+   planledger info --plan plan-0001      # full detail for one plan
+   planledger info --workshop workshop-0001
+   planledger info --paths-only          # only the resolved paths
+   planledger info --no-components       # drop per-component fill-state
+
+``--plan``/``--workshop`` accept a local id (``plan-0001``), global ref
+(``pl:plan-0001``), or file alias (``pl-plan-0001``).
 
 Plan management
 ---------------

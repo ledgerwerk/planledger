@@ -90,3 +90,58 @@ def test_status_json_exposes_prompt_profiles(
     assert profiles[0]["name"] == "planning_interview"
     assert profiles[0]["enabled"] is True
     assert profiles[0]["activation"] == "always"
+
+
+def test_info_json_envelope_contract(initialized_workspace: Path, invoke_json) -> None:
+    result, payload = invoke_json(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Add feature A",
+        "--request",
+        "Please review how we can add feature A.",
+    )
+    assert result.exit_code == 0, result.stdout
+
+    result, payload = invoke_json(initialized_workspace, "info")
+    assert result.exit_code == 0, result.stdout
+    assert payload["ok"] is True
+    assert payload["command"] == "info"
+    assert payload["events"] == []
+    r = payload["result"]
+    # Stable inventory contract surface that agents may parse.
+    for key in (
+        "initialized",
+        "workspace",
+        "storage",
+        "plan_status_counts",
+        "workshop_status_counts",
+        "plan_count",
+        "workshop_count",
+        "plans",
+        "workshops",
+        "size_bytes",
+        "total_size_bytes",
+    ):
+        assert key in r, key
+    for key in ("plans", "workshops", "total"):
+        assert key in r["size_bytes"], key
+    plan_entry = r["plans"][0]
+    for key in (
+        "plan_id",
+        "global_ref",
+        "file_ref",
+        "title",
+        "status",
+        "version",
+        "path",
+        "latest_rendered_path",
+        "latest_rendered_exists",
+        "components",
+        "filled_components",
+        "total_components",
+        "versions",
+        "size_bytes",
+    ):
+        assert key in plan_entry, key

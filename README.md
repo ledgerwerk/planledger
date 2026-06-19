@@ -240,6 +240,7 @@ Configs without `[ledger]` remain valid and default to code `pl` and name
 ```text
 planledger init [--project-name NAME] [--planledger-dir .planledger] [--hidden-config]
 planledger status [--check] [--json]
+planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
 planledger doctor [--json]
 planledger next-action [PLAN_ID] [--json]
 
@@ -259,6 +260,20 @@ planledger plan validate [PLAN_ID] [--plan PLAN_ID] [--json]
 planledger plan versions [PLAN_ID] [--plan PLAN_ID] [--json]
 planledger plan diff [PLAN_ID] [--plan PLAN_ID] --from v0001 --to v0002
 planledger plan apply --file PATH_OR_DASH [--dry-run]
+```
+
+`planledger info` is a read-only inventory of everything stored: workspace and
+storage paths, schema version and id counters, the active plan/workshop, and
+every plan and workshop with status, version, component fill-state, rendered
+artifact path, and disk footprint. Use `status` for a quick health/counts
+snapshot plus the active plan; use `info` for the full stored inventory.
+
+```bash
+planledger info                       # full human inventory
+planledger --json info | jq .         # machine-readable inventory
+planledger info --plan plan-0001      # full detail for one plan
+planledger info --paths-only          # just the resolved paths
+planledger info --no-components       # drop per-component fill-state
 ```
 
 ## Structured bundle workflow

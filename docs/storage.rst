@@ -59,6 +59,24 @@ Workspace discovery
 directory to find ``planledger.toml`` or ``.planledger.toml``. This identifies
 the project root and the configured Planledger storage directory.
 
+Read-only inventory
+-------------------
+
+``planledger info`` renders a read-only inventory of everything stored under
+the configured Planledger directory. It is backed by
+``planledger.storage.collect_inventory(workspace)``, which reports workspace
+and storage paths, the ``storage.yaml`` counters, plan and workshop status
+counts, and a per-plan/per-workshop entry list (status, version, component
+fill-state, rendered artifact path, versions, and disk size) plus a total disk
+footprint.
+
+Component fill-state is computed from the component files: a component counts
+as filled when its file is non-empty (``st_size > 0``). Reported sizes are
+scoped to component files, rendered artifacts, and the plan/workshop manifest;
+version snapshots under ``versions/`` are intentionally excluded so the
+footprint stays stable as history grows. ``collect_inventory`` never writes or
+migrates storage.
+
 Version snapshots
 -----------------
 

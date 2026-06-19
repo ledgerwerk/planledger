@@ -2072,3 +2072,222 @@ def create_plan_from_workshop(
     return load_plan(workspace, plan.plan_id), load_workshop(
         workspace, workshop.workshop_id
     )
+
+
+# ---------------------------------------------------------------------------
+# Inventory (read-only overview of everything planledger has stored)
+# ---------------------------------------------------------------------------
+
+
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _component_fill_state(
+    record_dir: Path, components: dict[str, ComponentSpec]
+) -> tuple[dict[str, bool], int]:
+    """Return ``({component_key: filled_bool}, filled_count)``.
+
+    A component counts as filled when its component file is non-empty
+    (``st_size > 0``). Missing files are treated as not filled, never raised.
+    Component keys are emitted in canonical order.
+    """
+    filled: dict[str, bool] = {}
+    filled_count = 0
+    for key in ordered_component_keys(components):
+        spec = components[key]
+        is_filled = _file_size(record_dir / spec.path) > 0
+        filled[key] = is_filled
+        if is_filled:
+            filled_count += 1
+    return filled, filled_count
+
+
+def _record_size_bytes(
+    record_dir: Path,
+    *,
+    manifest_path: Path,
+    components: dict[str, ComponentSpec],
+    rendered_directory: Path,
+) -> int:
+    """Sum bytes for component files + rendered artifacts + the manifest.
+
+    Version snapshots under ``versions/`` are intentionally excluded so the
+    reported size stays stable as history grows. Missing files contribute 0.
+    """
+    total = _file_size(manifest_path)
+    for spec in components.values():
+        total += _file_size(record_dir / spec.path)
+    if rendered_directory.exists():
+        for path in sorted(rendered_directory.iterdir()):
+            if path.is_file():
+                total += _file_size(path)
+    return total
+
+
+def _iter_workshops_readonly(workspace: Workspace) -> list[Workshop]:
+    """List workshops without triggering storage schema migration writes.
+
+    Mirrors :func:`list_workshops` but walks the workshops directory directly
+    and reads each manifest, so :func:`collect_inventory` stays read-only.
+    """
+    result: list[Workshop] = []
+    directory = workshops_dir(workspace)
+    if not directory.exists():
+        return result
+    for candidate in sorted(directory.iterdir()):
+        metadata_path = workshop_metadata_path_from_dir(candidate)
+        if not (candidate.is_dir() and metadata_path.exists()):
+            continue
+        try:
+            metadata = _load_yaml(metadata_path)
+            result.append(_workshop_from_metadata(candidate, metadata))
+        except PlanledgerError:
+            continue
+    return result
+
+
+def _status_counts_readonly(records: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        counts[record.status] = counts.get(record.status, 0) + 1
+    return counts
+
+
+def collect_inventory(workspace: Workspace) -> dict[str, Any]:
+    """Build a read-only inventory of everything stored in this workspace.
+
+    Reports workspace/config/storage paths, storage counters, status counts,
+    a per-plan and per-workshop entry list (status, version, component
+    fill-state, rendered artifact path, disk size), and the total disk
+    footprint. Purely read-only: it never writes storage or migrates the
+    schema, and tolerates missing components, unreadable storage, and empty
+    workshops without raising.
+    """
+    ledger_code = ledger_code_from_config(workspace.config)
+
+    try:
+        data = storage_data(workspace)
+        storage_readable = True
+    except PlanledgerError:
+        data = {}
+        storage_readable = False
+
+    project_cfg = workspace.config.get("project", {})
+    if not isinstance(project_cfg, dict):
+        project_cfg = {}
+    project_name = str(
+        data.get("project_name")
+        or project_cfg.get("name")
+        or workspace.root.name
+    )
+    project_uuid = str(data.get("project_uuid") or project_cfg.get("uuid") or "")
+
+    plan_entries: list[dict[str, Any]] = []
+    plans_total_size = 0
+    for plan in list_plans(workspace):
+        latest = latest_rendered_path(plan)
+        fill_state, filled_count = _component_fill_state(plan.path, plan.components)
+        base = plan_to_dict(plan, ledger_code=ledger_code)
+        size = _record_size_bytes(
+            plan.path,
+            manifest_path=plan_metadata_path_from_dir(plan.path),
+            components=plan.components,
+            rendered_directory=rendered_dir(plan),
+        )
+        plans_total_size += size
+        plan_entries.append(
+            {
+                "plan_id": base["plan_id"],
+                "id": base["id"],
+                "global_ref": base["global_ref"],
+                "file_ref": base["file_ref"],
+                "title": base["title"],
+                "status": base["status"],
+                "version": base["version"],
+                "path": base["path"],
+                "latest_rendered_path": str(latest),
+                "latest_rendered_exists": latest.exists(),
+                "components": fill_state,
+                "filled_components": filled_count,
+                "total_components": len(fill_state),
+                "versions": list_versions(plan),
+                "size_bytes": size,
+            }
+        )
+
+    workshops = _iter_workshops_readonly(workspace)
+    workshop_entries: list[dict[str, Any]] = []
+    workshops_total_size = 0
+    for workshop in workshops:
+        latest = latest_rendered_workshop_path(workshop)
+        fill_state, filled_count = _component_fill_state(
+            workshop.path, workshop.components
+        )
+        base = workshop_to_dict(workshop, ledger_code=ledger_code)
+        size = _record_size_bytes(
+            workshop.path,
+            manifest_path=workshop_metadata_path_from_dir(workshop.path),
+            components=workshop.components,
+            rendered_directory=workshop_rendered_dir(workshop),
+        )
+        workshops_total_size += size
+        workshop_entries.append(
+            {
+                "workshop_id": base["workshop_id"],
+                "id": base["id"],
+                "global_ref": base["global_ref"],
+                "file_ref": base["file_ref"],
+                "title": base["title"],
+                "status": base["status"],
+                "version": base["version"],
+                "path": base["path"],
+                "latest_rendered_path": str(latest),
+                "latest_rendered_exists": latest.exists(),
+                "components": fill_state,
+                "filled_components": filled_count,
+                "total_components": len(fill_state),
+                "versions": list_workshop_versions(workshop),
+                "size_bytes": size,
+            }
+        )
+
+    total_size = plans_total_size + workshops_total_size
+
+    return {
+        "initialized": True,
+        "workspace": {
+            "root": str(workspace.root),
+            "config_path": str(workspace.config_path),
+            "planledger_dir": str(workspace.planledger_dir),
+            "storage_path": str(workspace.storage_path),
+            "project_name": project_name,
+            "project_uuid": project_uuid,
+            "ledger_code": ledger_code,
+        },
+        "storage": {
+            "readable": storage_readable,
+            "schema_version": data.get("schema_version"),
+            "next_plan_id": data.get("next_plan_id"),
+            "next_workshop_id": data.get("next_workshop_id"),
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+            "active_plan_id": data.get("active_plan_id") or None,
+            "active_workshop_id": data.get("active_workshop_id") or None,
+        },
+        "plan_status_counts": plan_status_counts(workspace),
+        "workshop_status_counts": _status_counts_readonly(workshops),
+        "plan_count": len(plan_entries),
+        "workshop_count": len(workshop_entries),
+        "plans": plan_entries,
+        "workshops": workshop_entries,
+        "size_bytes": {
+            "plans": plans_total_size,
+            "workshops": workshops_total_size,
+            "total": total_size,
+        },
+        "total_size_bytes": total_size,
+    }

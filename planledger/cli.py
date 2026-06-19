@@ -25,6 +25,7 @@ from planledger.storage import (
     activate_workshop,
     append_component,
     append_workshop_component,
+    collect_inventory,
     component_spec,
     compute_next_action,
     create_plan,
@@ -399,6 +400,349 @@ def status(
 
     _run_command(ctx, "status", run)
 
+
+
+def _format_bytes(num_bytes: int) -> str:
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024.0:
+            return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
+
+
+def _record_matches(
+    entry_id: str, global_ref: str, file_ref: str, selector: str
+) -> bool:
+    sel = selector.strip().lower()
+    if not sel:
+        return False
+    return sel in {entry_id.lower(), global_ref.lower(), file_ref.lower()}
+
+
+def _inventory_header(result: dict[str, Any], title: str = "Planledger info") -> list[str]:
+    ws = result["workspace"]
+    lines = [title, f"Workspace: {ws['root']}", f"Config: {ws['config_path']}"]
+    lines.append(f"Planledger dir: {ws['planledger_dir']}")
+    lines.append(f"Storage: {ws['storage_path']}")
+    return lines
+
+
+def _human_inventory_paths(result: dict[str, Any]) -> str:
+    lines = _inventory_header(result, "Planledger info (paths)")
+    lines.append(f"Plans ({result['plan_count']}):")
+    if result["plans"]:
+        for entry in result["plans"]:
+            lines.append(f"  {entry['plan_id']}  {entry['path']}")
+            lines.append(f"    rendered: {entry['latest_rendered_path']}")
+    else:
+        lines.append("  (none)")
+    lines.append(f"Workshops ({result['workshop_count']}):")
+    if result["workshops"]:
+        for entry in result["workshops"]:
+            lines.append(f"  {entry['workshop_id']}  {entry['path']}")
+            lines.append(f"    rendered: {entry['latest_rendered_path']}")
+    else:
+        lines.append("  (none)")
+    lines.append("Next: planledger next-action")
+    return "\n".join(lines)
+
+
+def _human_record_focused(
+    entry: dict[str, Any],
+    *,
+    kind: str,
+    id_key: str,
+    no_components: bool,
+    paths_only: bool,
+) -> str:
+    lines = [
+        f"{kind.capitalize()}: {entry[id_key]}  {entry['global_ref']}",
+        f"title: {entry['title']}",
+        f"status: {entry['status']}",
+        f"version: {version_label(int(entry['version']))}",
+    ]
+    if paths_only:
+        lines.append(f"path: {entry['path']}")
+        lines.append(f"rendered: {entry['latest_rendered_path']}")
+        return "\n".join(lines)
+    lines.append(f"path: {entry['path']}")
+    rendered_state = "exists" if entry.get("latest_rendered_exists") else "(missing)"
+    lines.append(f"rendered: {entry['latest_rendered_path']}  {rendered_state}")
+    versions = entry.get("versions") or []
+    lines.append(f"versions: {', '.join(versions) if versions else '(none)'}")
+    lines.append(f"size: {_format_bytes(int(entry.get('size_bytes', 0)))}")
+    components = entry.get("components", {})
+    filled = int(entry.get("filled_components", 0))
+    total = int(entry.get("total_components", len(components)))
+    if no_components:
+        lines.append(f"components: {filled}/{total} filled (use without --no-components for detail)")
+    else:
+        lines.append(f"components ({filled}/{total} filled):")
+        for key, is_filled in components.items():
+            mark = "[x]" if is_filled else "[ ]"
+            lines.append(f"  {mark} {key}")
+    lines.append("Next: planledger next-action")
+    return "\n".join(lines)
+
+
+def _human_inventory_full(result: dict[str, Any], *, no_components: bool) -> str:
+    lines = _inventory_header(result)
+    ws = result["workspace"]
+    if ws["project_name"] and ws["project_uuid"]:
+        lines.append(f"Project: {ws['project_name']} ({ws['project_uuid']})")
+    elif ws["project_name"]:
+        lines.append(f"Project: {ws['project_name']}")
+    storage = result["storage"]
+    schema = storage.get("schema_version")
+    lines.append(f"Schema: {f'v{schema}' if schema is not None else 'unknown'}")
+    counters = []
+    if storage.get("next_plan_id") is not None:
+        counters.append(f"next_plan_id={storage['next_plan_id']}")
+    if storage.get("next_workshop_id") is not None:
+        counters.append(f"next_workshop_id={storage['next_workshop_id']}")
+    if counters:
+        lines.append(f"Counters: {' '.join(counters)}")
+    active_plan = storage.get("active_plan_id")
+    if active_plan:
+        match = next((p for p in result["plans"] if p["plan_id"] == active_plan), None)
+        if match:
+            lines.append(
+                f"Active plan: {match['plan_id']} {match['title']} ({match['status']})"
+            )
+        else:
+            lines.append(f"Active plan: {active_plan} (missing)")
+    else:
+        lines.append("Active plan: none")
+    active_workshop = storage.get("active_workshop_id")
+    if active_workshop:
+        match = next(
+            (w for w in result["workshops"] if w["workshop_id"] == active_workshop), None
+        )
+        if match:
+            lines.append(
+                f"Active workshop: {match['workshop_id']} {match['title']} ({match['status']})"
+            )
+        else:
+            lines.append(f"Active workshop: {active_workshop} (missing)")
+    else:
+        lines.append("Active workshop: none")
+
+    lines.append(f"\nPlans ({result['plan_count']}):")
+    if result["plans"]:
+        for entry in result["plans"]:
+            fill = ""
+            if not no_components:
+                fill = f"  {entry['filled_components']}/{entry['total_components']}"
+            lines.append(
+                f"  {entry['plan_id']}  {version_label(int(entry['version']))}  "
+                f"[{entry['status']}]{fill}  {entry['title']}"
+            )
+    else:
+        lines.append("  (none)")
+
+    lines.append(f"\nWorkshops ({result['workshop_count']}):")
+    if result["workshops"]:
+        for entry in result["workshops"]:
+            fill = ""
+            if not no_components:
+                fill = f"  {entry['filled_components']}/{entry['total_components']}"
+            lines.append(
+                f"  {entry['workshop_id']}  {version_label(int(entry['version']))}  "
+                f"[{entry['status']}]{fill}  {entry['title']}"
+            )
+    else:
+        lines.append("  (none)")
+
+    size = result.get("size_bytes", {})
+    lines.append("\nDisk footprint:")
+    lines.append(f"  plans:      {_format_bytes(int(size.get('plans', 0)))}")
+    lines.append(f"  workshops:  {_format_bytes(int(size.get('workshops', 0)))}")
+    lines.append(f"  total:      {_format_bytes(int(size.get('total', 0)))}")
+    lines.append("Next: planledger next-action")
+    return "\n".join(lines)
+
+
+def _human_inventory(
+    result: dict[str, Any],
+    *,
+    no_components: bool = False,
+    paths_only: bool = False,
+) -> str:
+    if not result.get("initialized", True):
+        return f"Planledger info\nWorkspace: {result['root']}\nNot initialized."
+    focus = result.get("focus")
+    if focus == "plan":
+        return _human_record_focused(
+            result["plan"],
+            kind="plan",
+            id_key="plan_id",
+            no_components=no_components,
+            paths_only=paths_only,
+        )
+    if focus == "workshop":
+        return _human_record_focused(
+            result["workshop"],
+            kind="workshop",
+            id_key="workshop_id",
+            no_components=no_components,
+            paths_only=paths_only,
+        )
+    if paths_only:
+        return _human_inventory_paths(result)
+    return _human_inventory_full(result, no_components=no_components)
+
+
+def _strip_components(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stripped: list[dict[str, Any]] = []
+    for entry in entries:
+        copy_entry = {key: value for key, value in entry.items() if key != "components"}
+        stripped.append(copy_entry)
+    return stripped
+
+
+@app.command("info")
+def info(
+    ctx: typer.Context,
+    plan: str | None = typer.Option(
+        None, "--plan", help="Narrow to one plan (id, global ref, or file ref)"
+    ),
+    workshop: str | None = typer.Option(
+        None,
+        "--workshop",
+        help="Narrow to one workshop (id, global ref, or file ref)",
+    ),
+    no_components: bool = typer.Option(
+        False,
+        "--no-components",
+        help="Omit per-component fill-state detail",
+    ),
+    paths_only: bool = typer.Option(
+        False,
+        "--paths-only",
+        help="Print only resolved paths (reduces human and JSON output)",
+    ),
+) -> None:
+    """Show a read-only inventory of everything planledger has stored.
+
+    Prints workspace/config/storage paths, schema version and id counters,
+    the active plan/workshop, and every plan and workshop with status,
+    version, component fill-state, rendered artifact path, and disk size.
+    Unlike ``status`` (quick health/counts + active plan), ``info`` shows the
+    full stored inventory. Use ``--plan``/``--workshop`` to narrow to one
+    record, ``--paths-only`` for just paths, or ``--no-components`` to drop
+    per-component fill-state.
+    """
+
+    def run() -> tuple[dict[str, Any], str]:
+        app_ctx = _context(ctx)
+        workspace = discover_workspace(app_ctx)
+        root = workspace_root_from_context(app_ctx)
+        if workspace is None:
+            result = {"initialized": False, "root": str(root)}
+            return result, f"Planledger info\nWorkspace: {root}\nNot initialized."
+
+        if plan is not None and workshop is not None:
+            raise PlanledgerError(
+                "invalid_options",
+                "Use either --plan or --workshop, not both.",
+            )
+
+        inventory = collect_inventory(workspace)
+
+        if plan is not None:
+            match = next(
+                (
+                    entry
+                    for entry in inventory["plans"]
+                    if _record_matches(
+                        entry["plan_id"], entry["global_ref"], entry["file_ref"], plan
+                    )
+                ),
+                None,
+            )
+            if match is None:
+                raise PlanledgerError(
+                    "not_found",
+                    f"No plan matches {plan!r}.",
+                    remediation=["Run: planledger info"],
+                )
+            if no_components:
+                match = {k: v for k, v in match.items() if k != "components"}
+            result = {
+                "initialized": True,
+                "workspace": inventory["workspace"],
+                "focus": "plan",
+                "plan": match,
+            }
+        elif workshop is not None:
+            match = next(
+                (
+                    entry
+                    for entry in inventory["workshops"]
+                    if _record_matches(
+                        entry["workshop_id"],
+                        entry["global_ref"],
+                        entry["file_ref"],
+                        workshop,
+                    )
+                ),
+                None,
+            )
+            if match is None:
+                raise PlanledgerError(
+                    "not_found",
+                    f"No workshop matches {workshop!r}.",
+                    remediation=["Run: planledger info"],
+                )
+            if no_components:
+                match = {k: v for k, v in match.items() if k != "components"}
+            result = {
+                "initialized": True,
+                "workspace": inventory["workspace"],
+                "focus": "workshop",
+                "workshop": match,
+            }
+        elif paths_only:
+            result = {
+                "initialized": True,
+                "workspace": inventory["workspace"],
+                "plan_count": inventory["plan_count"],
+                "workshop_count": inventory["workshop_count"],
+                "plans": [
+                    {
+                        "plan_id": e["plan_id"],
+                        "path": e["path"],
+                        "latest_rendered_path": e["latest_rendered_path"],
+                        "latest_rendered_exists": e["latest_rendered_exists"],
+                    }
+                    for e in inventory["plans"]
+                ],
+                "workshops": [
+                    {
+                        "workshop_id": e["workshop_id"],
+                        "path": e["path"],
+                        "latest_rendered_path": e["latest_rendered_path"],
+                        "latest_rendered_exists": e["latest_rendered_exists"],
+                    }
+                    for e in inventory["workshops"]
+                ],
+            }
+        else:
+            result = inventory
+            if no_components:
+                result = {
+                    **inventory,
+                    "plans": _strip_components(inventory["plans"]),
+                    "workshops": _strip_components(inventory["workshops"]),
+                }
+
+        message = _human_inventory(
+            result, no_components=no_components, paths_only=paths_only
+        )
+        return result, message
+
+    _run_command(ctx, "info", run)
 
 @app.command("doctor")
 def doctor_command(ctx: typer.Context) -> None:
