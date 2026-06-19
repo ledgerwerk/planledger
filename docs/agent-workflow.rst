@@ -108,7 +108,7 @@ to create or update plans in one step:
 Step 6: Optional planning interview
 ------------------------------------
 
-When the project enables the ``planning_interview`` prompt profile, the coding
+When the project enables the ``planning_workshop`` prompt profile, the coding
 agent (driven by the Planledger skill) asks one plan-quality question at a
 time, includes a recommended answer, inspects the repository first when
 possible, records required questions in ``open_questions``, and stops after
@@ -118,10 +118,10 @@ not interview the user.
 .. code-block:: toml
 
    # planledger.toml or .planledger.toml
-   [prompt_profiles.planning_interview]
+   [prompt_profiles.planning_workshop]
    enabled = true
    activation = "always"   # or "triggered"
-   trigger_phrases = ["grill", "grill me", "stress-test this plan"]
+   trigger_phrases = ["shape", "shape this feature", "shape this feature"]
 
 .. code-block:: bash
 
@@ -130,6 +130,6 @@ not interview the user.
    # result.prompt_profile.active == true
 
 Required questions are recorded as ``- [ ] REQUIRED:`` lines and resolved as
-``- [x] REQUIRED:`` lines in ``open_questions``. ``planning_interview`` is the
-canonical feature name; ``grill me`` is only a trigger phrase.
+``- [x] REQUIRED:`` lines in ``open_questions``. ``planning_workshop`` is the
+canonical feature name; ``shape this feature`` is only a trigger phrase.
    planledger plan apply --file plan.json

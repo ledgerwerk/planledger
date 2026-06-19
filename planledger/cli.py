@@ -1,4 +1,4 @@
-# ruff: noqa: B008
+# ruff: noqa: B008,E501
 from __future__ import annotations
 
 import json
@@ -9,39 +9,60 @@ from typing import Any
 import typer
 
 from planledger import __version__
-from planledger.bundle import apply_structured_plan_bundle, load_bundle
+from planledger.bundle import (
+    apply_structured_plan_bundle,
+    apply_structured_workshop_bundle,
+    load_bundle,
+)
 from planledger.errors import PlanledgerError
 from planledger.models import AppContext, PlanStatus, Workspace
 from planledger.prompt_profiles import load_prompt_profile
-from planledger.render import build_plan
+from planledger.render import build_plan, build_workshop
 from planledger.storage import (
     DEFAULT_PLANLEDGER_DIR,
     PLANLEDGER_CONFIG_FILENAMES,
     activate_plan,
+    activate_workshop,
     append_component,
+    append_workshop_component,
     component_spec,
     compute_next_action,
     create_plan,
+    create_plan_from_workshop,
+    create_workshop,
     diff_versions,
+    diff_workshop_versions,
     discover_workspace,
     doctor,
     get_active_plan_id,
+    get_active_workshop_id,
     initialize_project,
     latest_rendered_path,
+    latest_rendered_workshop_path,
     list_plans,
     list_versions,
+    list_workshop_versions,
+    list_workshops,
     load_component_content,
     load_plan,
+    load_workshop,
+    load_workshop_component_content,
     load_workspace,
     plan_status_counts,
     plan_to_dict,
     read_input_text,
     resolve_plan_id,
+    resolve_workshop_id,
     set_component,
     set_plan_status,
+    set_workshop_component,
+    set_workshop_status,
     storage_data,
     validate_plan,
+    validate_workshop,
     version_label,
+    workshop_status_counts,
+    workshop_to_dict,
     workspace_root_from_context,
 )
 
@@ -51,8 +72,12 @@ PLAN_OVERRIDE_HELP = "Plan id (overrides positional)"
 app = typer.Typer(help="Structured versioned planning files")
 plan_app = typer.Typer(help="Plan commands")
 component_app = typer.Typer(help="Plan component commands")
+workshop_app = typer.Typer(help="Planning workshop commands")
+workshop_component_app = typer.Typer(help="Workshop component commands")
 app.add_typer(plan_app, name="plan")
 plan_app.add_typer(component_app, name="component")
+app.add_typer(workshop_app, name="workshop")
+workshop_app.add_typer(workshop_component_app, name="component")
 
 
 def _version_callback(value: bool) -> None:
@@ -271,6 +296,23 @@ def status(
         if not project_name:
             project_name = config.get("name", workspace.root.name)
 
+        active_workshop_id = get_active_workshop_id(workspace)
+        active_workshop_info: dict[str, Any] | None = None
+        if active_workshop_id is not None:
+            try:
+                active_workshop = load_workshop(workspace, active_workshop_id)
+                active_workshop_info = {
+                    "workshop_id": active_workshop.workshop_id,
+                    "title": active_workshop.title,
+                    "status": active_workshop.status,
+                }
+            except PlanledgerError:
+                active_workshop_info = {
+                    "workshop_id": active_workshop_id,
+                    "title": "(missing)",
+                    "status": "unknown",
+                }
+
         active_plan_id = get_active_plan_id(workspace)
         active_plan_info: dict[str, Any] | None = None
         if active_plan_id is not None:
@@ -289,7 +331,9 @@ def status(
                 }
 
         status_counts = plan_status_counts(workspace)
+        workshop_counts = workshop_status_counts(workspace)
         plan_count = len(list_plans(workspace))
+        workshop_count = len(list_workshops(workspace))
 
         health_result: dict[str, Any] = {"checked": False, "healthy": None}
         if check:
@@ -311,8 +355,11 @@ def status(
             "planledger_dir": str(workspace.planledger_dir),
             "schema_version": data.get("schema_version"),
             "plan_count": plan_count,
+            "workshop_count": workshop_count,
             "status_counts": status_counts,
+            "workshop_status_counts": workshop_counts,
             "active_plan": active_plan_info,
+            "active_workshop": active_workshop_info,
             "health": health_result,
             "prompt_profiles": profiles,
         }
@@ -394,9 +441,32 @@ def plan_create(
         help="Read request text from standard input",
     ),
     status: PlanStatus = typer.Option("new", "--status", help="Initial status"),
+    from_workshop: str | None = typer.Option(
+        None, "--from-workshop", help="Create from shaped workshop"
+    ),
+    allow_unshaped: bool = typer.Option(
+        False, "--allow-unshaped", help="Allow plan creation from an unshaped workshop"
+    ),
+    no_workshop_status_update: bool = typer.Option(
+        False, "--no-workshop-status-update", help="Do not mark source workshop planned"
+    ),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
+        if from_workshop is not None:
+            created, workshop = create_plan_from_workshop(
+                workspace,
+                from_workshop,
+                title=title,
+                allow_unshaped=allow_unshaped,
+                update_workshop_status=not no_workshop_status_update,
+            )
+            built = build_plan(workspace, created.plan_id)
+            built["workshop_id"] = workshop.workshop_id
+            built["workshop_ref"] = workshop_to_dict(
+                workshop, ledger_code=workspace.ledger_code
+            )["global_ref"]
+            return built, _summary_message(built, "Created from workshop")
         request_text = read_input_text(request, request_file, stdin=request_stdin)
         created = create_plan(
             workspace,
@@ -842,3 +912,324 @@ def next_action(
         return result, "\n".join(lines)
 
     _run_command(ctx, "next-action", run)
+
+
+def _summary_workshop_message(workshop: dict[str, Any], verb: str) -> str:
+    return f"{verb} {workshop['workshop_id']} ({workshop['status']}, {version_label(int(workshop['version']))}) -> {workshop['latest_rendered_path']}"
+
+
+@workshop_app.command("create")
+def workshop_create(
+    ctx: typer.Context,
+    title: str = typer.Option(..., "--title"),
+    request: str | None = typer.Option(None, "--request"),
+    request_file: Path | None = typer.Option(None, "--request-file"),
+    request_stdin: bool = typer.Option(False, "--stdin"),
+    status: str = typer.Option("new", "--status"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        text = read_input_text(request, request_file, stdin=request_stdin)
+        created = create_workshop(workspace, title, text, status)
+        built = build_workshop(workspace, created.workshop_id)
+        return built, _summary_workshop_message(built, "Created")
+
+    _run_command(ctx, "workshop.create", run)
+
+
+@workshop_app.command("list")
+def workshop_list(
+    ctx: typer.Context, status: str | None = typer.Option(None, "--status")
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        workshops = [
+            workshop_to_dict(w, ledger_code=workspace.ledger_code)
+            for w in list_workshops(workspace, status=status)
+        ]
+        return {
+            "workshops": workshops
+        }, "No workshops found." if not workshops else "\n".join(
+            f"{w['workshop_id']} {w['title']} [{w['status']}] {version_label(int(w['version']))}"
+            for w in workshops
+        )
+
+    _run_command(ctx, "workshop.list", run)
+
+
+@workshop_app.command("activate")
+def workshop_activate(ctx: typer.Context, workshop_id: str) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        w = activate_workshop(workspace, workshop_id)
+        payload = workshop_to_dict(w, ledger_code=workspace.ledger_code)
+        return payload, f"Activated {w.workshop_id}"
+
+    _run_command(ctx, "workshop.activate", run)
+
+
+@workshop_app.command("show")
+def workshop_show(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+    component: str | None = typer.Option(None, "--component"),
+    rendered: bool = typer.Option(False, "--rendered"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        w = load_workshop(workspace, wid)
+        if component is not None:
+            content = load_workshop_component_content(w, component)
+            return {
+                "workshop_id": w.workshop_id,
+                "component": component,
+                "content": content,
+            }, content
+        if rendered:
+            path = latest_rendered_workshop_path(w)
+            if not path.exists():
+                build_workshop(workspace, w.workshop_id)
+            content = path.read_text(encoding="utf-8")
+            return {
+                "workshop_id": w.workshop_id,
+                "rendered_path": str(path),
+                "content": content,
+            }, content
+        payload = workshop_to_dict(w, ledger_code=workspace.ledger_code)
+        return (
+            payload,
+            f"{payload['workshop_id']}\ntitle: {payload['title']}\nstatus: {payload['status']}\nversion: {version_label(int(payload['version']))}\npath: {payload['path']}\nrendered: {payload['latest_rendered_path']}",
+        )
+
+    _run_command(ctx, "workshop.show", run)
+
+
+@workshop_app.command("status")
+def workshop_status(
+    ctx: typer.Context,
+    status: str,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+    reason: str = typer.Option(..., "--reason"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        updated = set_workshop_status(workspace, wid, status, reason, force=force)
+        built = build_workshop(workspace, updated.workshop_id)
+        return built, _summary_workshop_message(built, "Updated")
+
+    _run_command(ctx, "workshop.status", run)
+
+
+@workshop_app.command("cancel")
+def workshop_cancel(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+    reason: str = typer.Option(..., "--reason"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        updated = set_workshop_status(workspace, wid, "cancelled", reason)
+        payload = workshop_to_dict(updated, ledger_code=workspace.ledger_code)
+        return payload, f"Cancelled {wid}"
+
+    _run_command(ctx, "workshop.cancel", run)
+
+
+@workshop_app.command("validate")
+def workshop_validate(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        w = load_workshop(workspace, wid)
+        errors = validate_workshop(w, for_shaped=True)
+        return (
+            {"workshop_id": wid, "valid": not errors, "errors": errors},
+            "Workshop validation passed."
+            if not errors
+            else "Workshop validation failed:\n" + "\n".join(f"- {e}" for e in errors),
+        )
+
+    _run_command(ctx, "workshop.validate", run)
+
+
+@workshop_app.command("build")
+def workshop_build(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+    out: Path | None = typer.Option(None, "--out"),
+    print_output: bool = typer.Option(False, "--print"),
+    include_empty: bool = typer.Option(False, "--include-empty"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        built = build_workshop(workspace, wid, out=out, include_empty=include_empty)
+        return built, built["markdown"] if print_output else _summary_workshop_message(
+            built, "Built"
+        )
+
+    _run_command(ctx, "workshop.build", run)
+
+
+@workshop_app.command("export")
+def workshop_export(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+    out: Path | None = typer.Option(None, "--out"),
+    include_empty: bool = typer.Option(False, "--include-empty"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        target = out or (workspace.root / f"{wid}.md")
+        built = build_workshop(workspace, wid, out=target, include_empty=include_empty)
+        return built, f"Exported {wid} -> {target}"
+
+    _run_command(ctx, "workshop.export", run)
+
+
+@workshop_app.command("versions")
+def workshop_versions(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        w = load_workshop(workspace, wid)
+        versions = list_workshop_versions(w)
+        return {"workshop_id": wid, "versions": versions}, "\n".join(
+            versions
+        ) if versions else "No versions."
+
+    _run_command(ctx, "workshop.versions", run)
+
+
+@workshop_app.command("diff")
+def workshop_diff(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+    from_version: str = typer.Option(..., "--from"),
+    to_version: str = typer.Option(..., "--to"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        diff = diff_workshop_versions(workspace, wid, from_version, to_version)
+        return {"workshop_id": wid, "diff": diff}, diff
+
+    _run_command(ctx, "workshop.diff", run)
+
+
+@workshop_component_app.command("list")
+def workshop_component_list(
+    ctx: typer.Context,
+    positional: str | None = typer.Argument(None),
+    workshop: str | None = typer.Option(None, "--workshop"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop, positional)
+        w = load_workshop(workspace, wid)
+        components = workshop_to_dict(w, ledger_code=workspace.ledger_code)[
+            "components"
+        ]
+        return {"workshop_id": wid, "components": components}, "\n".join(
+            components.keys()
+        )
+
+    _run_command(ctx, "workshop.component.list", run)
+
+
+@workshop_component_app.command("show")
+def workshop_component_show(
+    ctx: typer.Context,
+    component: str,
+    workshop: str | None = typer.Option(None, "--workshop"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop)
+        w = load_workshop(workspace, wid)
+        content = load_workshop_component_content(w, component)
+        return {"workshop_id": wid, "component": component, "content": content}, content
+
+    _run_command(ctx, "workshop.component.show", run)
+
+
+@workshop_component_app.command("set")
+def workshop_component_set(
+    ctx: typer.Context,
+    component: str,
+    workshop: str | None = typer.Option(None, "--workshop"),
+    text: str | None = typer.Option(None, "--text"),
+    file: Path | None = typer.Option(None, "--file"),
+    stdin: bool = typer.Option(False, "--stdin"),
+    reason: str | None = typer.Option(None, "--reason"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop)
+        content = read_input_text(text, file, stdin=stdin)
+        updated = set_workshop_component(
+            workspace, wid, component, content, reason, force=force
+        )
+        built = build_workshop(workspace, updated.workshop_id)
+        return built, _summary_workshop_message(built, "Updated")
+
+    _run_command(ctx, "workshop.component.set", run)
+
+
+@workshop_component_app.command("append")
+def workshop_component_append(
+    ctx: typer.Context,
+    component: str,
+    workshop: str | None = typer.Option(None, "--workshop"),
+    text: str | None = typer.Option(None, "--text"),
+    file: Path | None = typer.Option(None, "--file"),
+    stdin: bool = typer.Option(False, "--stdin"),
+    reason: str | None = typer.Option(None, "--reason"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        wid = resolve_workshop_id(workspace, workshop)
+        content = read_input_text(text, file, stdin=stdin)
+        updated = append_workshop_component(
+            workspace, wid, component, content, reason, force=force
+        )
+        built = build_workshop(workspace, updated.workshop_id)
+        return built, _summary_workshop_message(built, "Updated")
+
+    _run_command(ctx, "workshop.component.append", run)
+
+
+@workshop_app.command("apply")
+def workshop_apply(
+    ctx: typer.Context,
+    file: Path = typer.Option(..., "--file"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        workspace = _require_workspace(ctx)
+        bundle = load_bundle(file)
+        result = apply_structured_workshop_bundle(workspace, bundle, dry_run=dry_run)
+        return result, json.dumps(result, indent=2, default=str)
+
+    _run_command(ctx, "workshop.apply", run)

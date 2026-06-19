@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Planledger prompt profiles.
 
 A prompt profile is an optional, project-configured policy that the
@@ -5,7 +6,7 @@ Planledger skill obeys. The CLI only parses, persists, and exposes the policy;
 it never interviews the user itself. The coding agent asks the questions because
 the Planledger skill tells it to.
 
-The canonical profile is ``planning_interview``.
+The canonical profile is ``planning_workshop``; ``planning_interview`` is a deprecated alias.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from planledger.models import Plan, Workspace
 QuestionPolicy = Literal["ask_when_missing", "ask_one_at_a_time", "none"]
 ActivationPolicy = Literal["always", "triggered"]
 
-DEFAULT_PROFILE_NAME = "planning_interview"
+DEFAULT_PROFILE_NAME = "planning_workshop"
+DEPRECATED_PROFILE_NAME = "planning_interview"
 DEFAULT_MAX_REQUIRED_QUESTIONS = 20
 DEFAULT_MIN_RESOLVED_REQUIRED_QUESTIONS_BEFORE_DONE = 0
 _VALID_ACTIVATIONS = ("always", "triggered")
@@ -41,6 +43,9 @@ class PromptProfile:
     min_resolved_required_questions_before_done: int = (
         DEFAULT_MIN_RESOLVED_REQUIRED_QUESTIONS_BEFORE_DONE
     )
+    example_policy: str = "bdd_concrete_examples"
+    min_examples_before_shaped: int = 1
+    min_resolved_required_questions_before_shaped: int = 0
     required_question_topics: tuple[str, ...] = ()
     extra_guidance: str = ""
 
@@ -59,6 +64,9 @@ class PromptProfile:
                 self.min_resolved_required_questions_before_done
             ),
             "required_question_topics": list(self.required_question_topics),
+            "example_policy": self.example_policy,
+            "min_examples_before_shaped": self.min_examples_before_shaped,
+            "min_resolved_required_questions_before_shaped": self.min_resolved_required_questions_before_shaped,
             "extra_guidance": self.extra_guidance,
         }
 
@@ -84,7 +92,14 @@ def _parse_prompt_profile(
     warnings: list[str] = []
     profiles_section = config.get("prompt_profiles")
     if not isinstance(profiles_section, dict) or name not in profiles_section:
-        return _disabled_profile(name), warnings
+        if (
+            name == DEFAULT_PROFILE_NAME
+            and isinstance(profiles_section, dict)
+            and DEPRECATED_PROFILE_NAME in profiles_section
+        ):
+            name = DEPRECATED_PROFILE_NAME
+        else:
+            return _disabled_profile(name), warnings
 
     raw = profiles_section[name]
     if not isinstance(raw, dict):
@@ -173,6 +188,34 @@ def _parse_prompt_profile(
     else:
         min_resolved = raw_min
 
+    example_policy = (
+        str(raw.get("example_policy", "bdd_concrete_examples"))
+        if isinstance(raw.get("example_policy", "bdd_concrete_examples"), str)
+        else "bdd_concrete_examples"
+    )
+    min_examples_before_shaped = raw.get("min_examples_before_shaped", 1)
+    if (
+        isinstance(min_examples_before_shaped, bool)
+        or not isinstance(min_examples_before_shaped, int)
+        or min_examples_before_shaped < 0
+    ):
+        warnings.append(
+            f"prompt_profiles.{name}.min_examples_before_shaped must be a non-negative integer; fell back to 1."
+        )
+        min_examples_before_shaped = 1
+    min_resolved_required_questions_before_shaped = raw.get(
+        "min_resolved_required_questions_before_shaped", 0
+    )
+    if (
+        isinstance(min_resolved_required_questions_before_shaped, bool)
+        or not isinstance(min_resolved_required_questions_before_shaped, int)
+        or min_resolved_required_questions_before_shaped < 0
+    ):
+        warnings.append(
+            f"prompt_profiles.{name}.min_resolved_required_questions_before_shaped must be a non-negative integer; fell back to 0."
+        )
+        min_resolved_required_questions_before_shaped = 0
+
     # trigger_phrases (array of strings)
     trigger_phrases: tuple[str, ...] = ()
     raw_phrases = raw.get("trigger_phrases", ())
@@ -216,6 +259,9 @@ def _parse_prompt_profile(
         include_recommended_answer=include_recommended_answer,
         max_required_questions=max_required_questions,
         min_resolved_required_questions_before_done=min_resolved,
+        example_policy=example_policy,
+        min_examples_before_shaped=min_examples_before_shaped,
+        min_resolved_required_questions_before_shaped=min_resolved_required_questions_before_shaped,
         required_question_topics=required_topics,
         extra_guidance=extra_guidance,
     )

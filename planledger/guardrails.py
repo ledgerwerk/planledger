@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 import re
@@ -118,3 +119,72 @@ def unresolved_required_questions(text: str) -> list[str]:
 def count_resolved_required_questions(text: str) -> int:
     """Count resolved (``- [x] REQUIRED:``) questions in the text."""
     return len(RESOLVED_REQUIRED_QUESTION_RE.findall(text or ""))
+
+
+EXAMPLE_HEADING_RE = re.compile(r"(?im)^###\s+EXAMPLE-\d+")
+SCENARIO_HEADING_RE = re.compile(r"(?im)^###\s+SCENARIO-\d+")
+GIVEN_RE = re.compile(r"(?im)^\s*Given\b")
+WHEN_RE = re.compile(r"(?im)^\s*When\b")
+THEN_RE = re.compile(r"(?im)^\s*Then\b")
+IN_SCOPE_RE = re.compile(r"(?im)^#+\s+In scope\b")
+OUT_OF_SCOPE_RE = re.compile(r"(?im)^#+\s+Out of scope\b")
+
+
+def split_example_blocks(text: str) -> list[str]:
+    matches = list(EXAMPLE_HEADING_RE.finditer(text or ""))
+    blocks: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        blocks.append(text[match.start() : end].strip())
+    return blocks
+
+
+def split_scenario_blocks(text: str) -> list[str]:
+    matches = list(SCENARIO_HEADING_RE.finditer(text or ""))
+    blocks: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        blocks.append(text[match.start() : end].strip())
+    return blocks
+
+
+def _has_placeholder_only(value: str) -> bool:
+    stripped = (value or "").strip()
+    return not stripped or bool(PLACEHOLDER_RE.fullmatch(stripped))
+
+
+def validate_workshop_contents(contents: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    for key in ("story", "examples", "decisions", "scope", "acceptance_scenarios"):
+        if _has_placeholder_only(contents.get(key, "")):
+            errors.append(
+                f"Component {key!r} must be non-empty and not placeholder-only."
+            )
+    examples = split_example_blocks(contents.get("examples", ""))
+    if not examples:
+        errors.append(
+            "Component 'examples' must contain at least one EXAMPLE-001 style example."
+        )
+    for index, block in enumerate(examples, start=1):
+        if not (
+            GIVEN_RE.search(block) and WHEN_RE.search(block) and THEN_RE.search(block)
+        ):
+            errors.append(f"example {index} must contain Given, When, and Then steps.")
+    scope = contents.get("scope", "")
+    if not IN_SCOPE_RE.search(scope):
+        errors.append("Component 'scope' must contain an In scope section.")
+    if not OUT_OF_SCOPE_RE.search(scope):
+        errors.append("Component 'scope' must contain an Out of scope section.")
+    scenarios = split_scenario_blocks(contents.get("acceptance_scenarios", ""))
+    if not scenarios:
+        errors.append(
+            "Component 'acceptance_scenarios' must contain at least one SCENARIO-001 style scenario."
+        )
+    for index, block in enumerate(scenarios, start=1):
+        if not (
+            GIVEN_RE.search(block) and WHEN_RE.search(block) and THEN_RE.search(block)
+        ):
+            errors.append(f"scenario {index} must contain Given, When, and Then steps.")
+    if unresolved_required_questions(contents.get("open_questions", "")):
+        errors.append("open_questions contains unresolved required questions.")
+    return errors

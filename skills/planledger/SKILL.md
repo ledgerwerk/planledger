@@ -1,6 +1,6 @@
 ---
 name: planledger
-description: Create independent structured implementation plans and standalone Markdown handoff artifacts
+description: Shape planning workshops first, then create structured implementation plans and standalone Markdown handoff artifacts
 license: Apache-2.0
 compatibility: opencode
 metadata:
@@ -122,7 +122,7 @@ plan apply
 
 ## Planning interview profile protocol
 
-When `planledger next-action --json` returns `prompt_profile.name == "planning_interview"` and `prompt_profile.active == true`, ask exactly one question, include a recommended answer, then stop and wait for the user.
+When `planledger next-action --json` returns `prompt_profile.name == "planning_workshop" (deprecated alias: prompt_profile.name == "planning_interview")` and `prompt_profile.active == true`, ask exactly one question, include a recommended answer, then stop and wait for the user.
 
 Rules:
 

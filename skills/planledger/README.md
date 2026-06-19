@@ -1,6 +1,6 @@
 # Planledger Agent Skill
 
-This skill teaches a coding harness how to use planledger as a plan-only CLI for structured, versioned implementation handoffs.
+This skill teaches a coding harness how to use planledger as a workshop-first CLI for planning workshops and structured implementation handoffs.
 
 ## Installation
 

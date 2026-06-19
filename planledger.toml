@@ -13,13 +13,13 @@ planledger_dir = "../ledger/plan/planledger"
 # The CLI only parses and exposes this policy; it never interviews the user.
 # Uncomment to enable the planning interview loop (one question + recommended answer).
 #
-# [prompt_profiles.planning_interview]
-# enabled = true
-# activation = "always"             # or "triggered"
-# question_policy = "ask_one_at_a_time"
-# codebase_first = true
-# include_recommended_answer = true
-# max_required_questions = 20
+[prompt_profiles.planning_workshop]
+enabled = true
+activation = "always"             # or "triggered"
+question_policy = "ask_one_at_a_time"
+codebase_first = true
+include_recommended_answer = true
+max_required_questions = 10
 # min_resolved_required_questions_before_done = 0
-# trigger_phrases = ["grill", "grill me", "stress-test this plan"]
-# required_question_topics = ["scope", "tests", "rollback", "risks"]
+# trigger_phrases = ["shape", "shape this feature", "shape this feature"]
+required_question_topics = ["scope", "tests", "rollback", "risks"]

@@ -96,7 +96,7 @@ workspace.
 Planning interview profile
 --------------------------
 
-Planledger ships an optional prompt profile named ``planning_interview``.
+Planledger ships an optional prompt profile named ``planning_workshop``.
 When enabled, the existing Planledger skill (the single
 ``skills/planledger/SKILL.md``) asks the user one plan-quality question at a
 time, includes a recommended answer, inspects the repository first when
@@ -108,7 +108,7 @@ Configure it in ``planledger.toml`` or ``.planledger.toml``:
 
 .. code-block:: toml
 
-   [prompt_profiles.planning_interview]
+   [prompt_profiles.planning_workshop]
    enabled = true
    activation = "always"          # or "triggered"
    question_policy = "ask_one_at_a_time"
@@ -116,7 +116,7 @@ Configure it in ``planledger.toml`` or ``.planledger.toml``:
    include_recommended_answer = true
    max_required_questions = 20
    min_resolved_required_questions_before_done = 0
-   trigger_phrases = ["grill", "grill me", "stress-test this plan"]
+   trigger_phrases = ["shape", "shape this feature", "shape this feature"]
    required_question_topics = ["scope", "tests", "rollback", "risks"]
 
 With the profile active, the profile metadata and an agent instruction appear
@@ -133,7 +133,7 @@ in the machine-readable steering command:
 - ``answer_required_question`` when ``open_questions`` already holds an unresolved
   ``- [ ] REQUIRED:`` line (only the first such question is surfaced).
 
-The phrase ``grill me`` is supported only as a trigger phrase for
-``activation = "triggered"``; ``planning_interview`` is the canonical feature
-name. The profile does not create planning-interview records, does not replace
-``open_questions``, and does not change Planledger's plan-only scope.
+The phrase ``shape this feature`` is supported only as a trigger phrase for
+``activation = "triggered"``; ``planning_workshop`` is the canonical feature
+name. The profile does not create planning-workshop records, does not replace
+``open_questions``, and does not change Planledger's workshop-first, plan-second scope.

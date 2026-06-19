@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -266,4 +267,179 @@ def apply_structured_plan_bundle(
         "operation": "update",
         "dry_run": False,
         "plan": built,
+    }
+
+
+from planledger.guardrails import validate_workshop_contents
+from planledger.identity import normalize_workshop_selector, workshop_ref
+from planledger.render import build_workshop
+from planledger.storage import (
+    apply_workshop_mutations,
+    create_workshop,
+    load_workshop,
+    preview_workshop_id,
+    validate_workshop,
+    workshop_component_spec,
+)
+
+STRUCTURED_WORKSHOP_SCHEMA = "planledger.structured_workshop.v1"
+
+
+def _validate_workshop_components(
+    components: Any, *, section_name: str, errors: list[str]
+) -> dict[str, str]:
+    if components is None:
+        return {}
+    if not isinstance(components, dict):
+        errors.append(f"{section_name} must be an object.")
+        return {}
+    out: dict[str, str] = {}
+    for key, value in components.items():
+        try:
+            workshop_component_spec(key)
+        except PlanledgerError as exc:
+            errors.append(exc.message)
+            continue
+        if not isinstance(value, str):
+            errors.append(f"Component {key!r} must be a string.")
+            continue
+        out[key] = value
+    return out
+
+
+def validate_structured_workshop_bundle(
+    bundle: dict[str, Any], workspace: Workspace | None = None
+) -> list[str]:
+    errors: list[str] = []
+    if bundle.get("schema") != STRUCTURED_WORKSHOP_SCHEMA:
+        errors.append(
+            "Missing or invalid schema: expected 'planledger.structured_workshop.v1'."
+        )
+    op = bundle.get("operation")
+    if op not in {"create", "update"}:
+        errors.append("Operation must be 'create' or 'update'.")
+        return errors
+    if op == "create":
+        workshop = bundle.get("workshop")
+        if not isinstance(workshop, dict):
+            errors.append("Create bundles require a 'workshop' object.")
+            return errors
+        if (
+            not isinstance(workshop.get("title"), str)
+            or not workshop.get("title", "").strip()
+        ):
+            errors.append("Create bundles require workshop.title.")
+        if (
+            not isinstance(workshop.get("request"), str)
+            or not workshop.get("request", "").strip()
+        ):
+            errors.append("Create bundles require workshop.request.")
+        comps = _validate_workshop_components(
+            workshop.get("components"),
+            section_name="workshop.components",
+            errors=errors,
+        )
+        status = workshop.get("status", "new")
+        if status == "shaped":
+            contents = {**comps, "request": str(workshop.get("request", ""))}
+            errors.extend(validate_workshop_contents(contents))
+    else:
+        wid = bundle.get("workshop_id")
+        if not isinstance(wid, str) or not wid.strip():
+            errors.append("Update bundles require workshop_id.")
+            return errors
+        if (
+            not isinstance(bundle.get("reason"), str)
+            or not bundle.get("reason", "").strip()
+        ):
+            errors.append("Update bundles require reason.")
+        _validate_workshop_components(
+            bundle.get("components"),
+            section_name="Update bundle components",
+            errors=errors,
+        )
+        if workspace is not None and not errors:
+            try:
+                normalize_workshop_selector(wid, ledger_code=workspace.ledger_code)
+            except IdFormatError:
+                errors.append(f"Invalid workshop reference {wid!r}.")
+    return errors
+
+
+def apply_structured_workshop_bundle(
+    workspace: Workspace, bundle: dict[str, Any], *, dry_run: bool = False
+) -> dict[str, Any]:
+    errors = validate_structured_workshop_bundle(bundle, workspace)
+    if errors:
+        raise PlanledgerError(
+            "invalid_bundle",
+            "Structured workshop bundle validation failed.",
+            remediation=errors,
+        )
+    if bundle["operation"] == "create":
+        sec = bundle["workshop"]
+        assert isinstance(sec, dict)
+        comps = sec.get("components", {})
+        assert isinstance(comps, dict)
+        if dry_run:
+            wid = preview_workshop_id(workspace)
+            ref = workshop_ref(wid, ledger_code=workspace.ledger_code)
+            return {
+                "operation": "create",
+                "dry_run": True,
+                "workshop_id": wid,
+                "global_ref": ref.global_ref,
+                "file_ref": ref.file_ref,
+                "title": str(sec["title"]),
+                "status": str(sec.get("status", "new")),
+                "component_keys": sorted(comps),
+            }
+        created = create_workshop(
+            workspace,
+            str(sec["title"]),
+            str(sec["request"]),
+            str(sec.get("status", "new")),
+            components={k: str(v) for k, v in comps.items()},
+        )
+        return {
+            "operation": "create",
+            "dry_run": False,
+            "workshop": build_workshop(workspace, created.workshop_id),
+        }
+    wid = normalize_workshop_selector(
+        str(bundle["workshop_id"]), ledger_code=workspace.ledger_code
+    )
+    comps = bundle.get("components", {})
+    assert isinstance(comps, dict)
+    before = load_workshop(workspace, wid)
+    if dry_run:
+        ref = workshop_ref(wid, ledger_code=workspace.ledger_code)
+        return {
+            "operation": "update",
+            "dry_run": True,
+            "workshop_id": wid,
+            "global_ref": ref.global_ref,
+            "file_ref": ref.file_ref,
+            "current_version": before.version,
+            "next_version": before.version + 1,
+            "status": bundle.get("status", before.status),
+            "component_keys": sorted(comps),
+        }
+    updated = apply_workshop_mutations(
+        workspace,
+        wid,
+        component_updates={k: str(v) for k, v in comps.items()},
+        status=str(bundle["status"]) if "status" in bundle else None,
+        reason=str(bundle["reason"]),
+        force=bool(bundle.get("force", False)),
+    )
+    errs = validate_workshop(updated, for_shaped=updated.status == "shaped")
+    if errs:
+        raise PlanledgerError(
+            "invalid_workshop", "Updated workshop failed validation.", remediation=errs
+        )
+    return {
+        "operation": "update",
+        "dry_run": False,
+        "workshop": build_workshop(workspace, wid),
     }

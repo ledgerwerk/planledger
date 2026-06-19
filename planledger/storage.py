@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from __future__ import annotations
 
 import copy
@@ -20,17 +21,30 @@ from planledger.guardrails import (
     count_resolved_required_questions,
     unresolved_required_questions,
     validate_handoff_contents,
+    validate_workshop_contents,
 )
 from planledger.identity import (
     DEFAULT_LEDGER_CODE,
     DEFAULT_LEDGER_NAME,
     PLAN_KIND,
+    WORKSHOP_KIND,
     format_plan_id,
+    format_workshop_id,
     ledger_code_from_config,
     normalize_plan_selector,
+    normalize_workshop_selector,
     plan_ref,
+    workshop_ref,
 )
-from planledger.models import AppContext, ComponentSpec, Plan, PlanStatus, Workspace
+from planledger.models import (
+    AppContext,
+    ComponentSpec,
+    Plan,
+    PlanStatus,
+    Workshop,
+    WorkshopStatus,
+    Workspace,
+)
 from planledger.prompt_profiles import (
     active_prompt_profile_for_plan,
     load_prompt_profile,
@@ -344,7 +358,7 @@ def allocate_plan_id(workspace: Workspace) -> str:
 
 def get_active_plan_id(workspace: Workspace) -> str | None:
     data = storage_data(workspace)
-    return data.get("active_plan_id")
+    return data.get("active_plan_id") or None
 
 
 def set_active_plan_id(workspace: Workspace, plan_id: str) -> None:
@@ -425,11 +439,15 @@ def initialize_project(
         "schema_version": 2,
         "project_uuid": project_uuid,
         "next_plan_id": 1,
+        "next_workshop_id": 1,
+        "active_plan_id": "",
+        "active_workshop_id": "",
         "created_at": timestamp,
         "updated_at": timestamp,
     }
     _write_yaml(planledger_path / STORAGE_FILENAME, storage)
     (planledger_path / "plans").mkdir(parents=True, exist_ok=True)
+    (planledger_path / "workshops").mkdir(parents=True, exist_ok=True)
     _atomic_write(
         resolved_root / config_filename,
         _toml_dump(config),
@@ -682,7 +700,7 @@ def _profile_done_errors(
     resolved = count_resolved_required_questions(contents.get("open_questions", ""))
     if resolved < required_count:
         return [
-            "Prompt profile 'planning_interview' requires "
+            "Prompt profile 'planning_workshop' requires "
             f"{required_count} resolved required question(s) before done; "
             f"found {resolved}."
         ]
@@ -1127,8 +1145,8 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
         errors.append(f"Missing storage file: {workspace.storage_path}.")
     else:
         data = storage_data(workspace)
-        if int(data.get("schema_version", 0)) != 2:
-            errors.append("Unsupported storage schema; expected schema_version 2.")
+        if int(data.get("schema_version", 0)) not in {2, 3}:
+            errors.append("Unsupported storage schema; expected schema_version 2 or 3.")
     if not plans_dir(workspace).exists():
         errors.append(f"Missing plans directory: {plans_dir(workspace)}.")
     if not errors:
@@ -1167,6 +1185,73 @@ def compute_next_action(
             "blockers": [],
             "validation_errors": [],
         }
+
+    active_workshop_id = get_active_workshop_id(workspace)
+    if plan_id is None and active_workshop_id is not None:
+        workshop = load_workshop(workspace, active_workshop_id)
+        contents = load_workshop_component_contents(workshop)
+        workshop_errors = validate_workshop(workshop, for_shaped=True)
+        unresolved = unresolved_required_questions(contents.get("open_questions", ""))
+        base = {
+            "workspace_initialized": True,
+            "workshop_id": workshop.workshop_id,
+            "workshop_status": workshop.status,
+            "plan_id": None,
+            "status": None,
+            "blockers": [],
+            "validation_errors": workshop_errors,
+        }
+        if unresolved:
+            return {
+                **base,
+                "next_item": "answer_required_workshop_question",
+                "next_command": None,
+                "question": unresolved[0],
+            }
+        profile = load_prompt_profile(workspace.config, name="planning_workshop")
+        if (
+            profile.enabled
+            and profile.active
+            and workshop.status not in {"shaped", "planned", "cancelled"}
+        ):
+            return {
+                **base,
+                "next_item": "ask_workshop_question",
+                "next_command": None,
+                "prompt_profile": profile.to_dict(),
+                "agent_instruction": (
+                    "Ask exactly one planning-workshop question, include a "
+                    "recommended answer, record it in open_questions, and stop."
+                ),
+            }
+        if not contents.get("examples", "").strip():
+            return {
+                **base,
+                "next_item": "add_concrete_example",
+                "component": "examples",
+                "next_command": (
+                    f"planledger workshop component set examples "
+                    f"--workshop {workshop.workshop_id} --file examples.md"
+                ),
+            }
+        if not workshop_errors and workshop.status == "exploring":
+            return {
+                **base,
+                "next_item": "mark_workshop_shaped",
+                "next_command": (
+                    f"planledger workshop status {workshop.workshop_id} shaped "
+                    '--reason "Examples, scope, and scenarios are clear."'
+                ),
+            }
+        if workshop.status == "shaped" and not workshop.metadata.get("linked_plans"):
+            return {
+                **base,
+                "next_item": "create_plan_from_workshop",
+                "next_command": (
+                    f"planledger plan create --from-workshop {workshop.workshop_id} "
+                    f'--title "Implement: {workshop.title}"'
+                ),
+            }
 
     plans = list_plans(workspace)
 
@@ -1332,4 +1417,658 @@ def compute_next_action(
             "blockers": [],
             "validation_errors": [],
         }
+    )
+
+
+VALID_WORKSHOP_STATUSES: set[WorkshopStatus] = {
+    "new",
+    "exploring",
+    "shaped",
+    "planned",
+    "cancelled",
+}
+VALID_WORKSHOP_TRANSITIONS: dict[WorkshopStatus, set[WorkshopStatus]] = {
+    "new": {"exploring", "shaped", "cancelled"},
+    "exploring": {"shaped", "cancelled"},
+    "shaped": {"exploring", "planned", "cancelled"},
+    "planned": {"exploring", "cancelled"},
+    "cancelled": set(),
+}
+WORKSHOP_COMPONENT_DEFINITIONS: tuple[tuple[str, str, str, int, bool], ...] = (
+    ("request", "components/request.md", "Original request", 0, True),
+    ("story", "components/story.md", "Story / intent", 10, True),
+    ("context", "components/context.md", "Repository / product context", 20, False),
+    ("examples", "components/examples.md", "Concrete examples", 30, True),
+    ("rules", "components/rules.md", "Business rules", 40, False),
+    ("open_questions", "components/open_questions.md", "Open questions", 50, False),
+    ("decisions", "components/decisions.md", "Decisions", 60, True),
+    ("scope", "components/scope.md", "Scope", 70, True),
+    (
+        "acceptance_scenarios",
+        "components/acceptance_scenarios.md",
+        "Accepted scenarios",
+        80,
+        True,
+    ),
+    ("plan_hints", "components/plan_hints.md", "Plan hints", 90, False),
+    ("risks", "components/risks.md", "Risks", 100, False),
+    ("notes", "components/notes.md", "Notes", 110, False),
+)
+
+
+def _ensure_workshop_storage_defaults(workspace: Workspace) -> dict[str, Any]:
+    data = storage_data(workspace)
+    changed = False
+    for key, value in (("next_workshop_id", 1), ("active_workshop_id", "")):
+        if key not in data:
+            data[key] = value
+            changed = True
+    if int(data.get("schema_version", 2)) < 3:
+        data["schema_version"] = 3
+        changed = True
+    if changed:
+        data["updated_at"] = now_iso()
+        save_storage_data(workspace, data)
+    return data
+
+
+def workshops_dir(workspace: Workspace) -> Path:
+    return workspace.planledger_dir / "workshops"
+
+
+def workshop_dir(workspace: Workspace, workshop_id: str) -> Path:
+    return workshops_dir(workspace) / workshop_id
+
+
+def workshop_metadata_path_from_dir(path: Path) -> Path:
+    return path / "workshop.yaml"
+
+
+def workshop_metadata_path(workspace: Workspace, workshop_id: str) -> Path:
+    return workshop_metadata_path_from_dir(workshop_dir(workspace, workshop_id))
+
+
+def workshop_rendered_dir(workshop: Workshop) -> Path:
+    return workshop.path / "rendered"
+
+
+def latest_rendered_workshop_path(workshop: Workshop) -> Path:
+    return workshop_rendered_dir(workshop) / "latest.md"
+
+
+def versioned_rendered_workshop_path(
+    workshop: Workshop, version: int | None = None
+) -> Path:
+    selected = version if version is not None else workshop.version
+    return (
+        workshop_rendered_dir(workshop)
+        / f"{workshop.workshop_id}-{version_label(selected)}.md"
+    )
+
+
+def workshop_versions_dir(workshop: Workshop) -> Path:
+    return workshop.path / "versions"
+
+
+def workshop_version_snapshot_dir(workshop: Workshop, version: int) -> Path:
+    return workshop_versions_dir(workshop) / version_label(version)
+
+
+def default_plan_component_specs() -> dict[str, ComponentSpec]:
+    return default_component_specs()
+
+
+def default_workshop_component_specs() -> dict[str, ComponentSpec]:
+    return {
+        k: ComponentSpec(k, path, title, order, required)
+        for k, path, title, order, required in WORKSHOP_COMPONENT_DEFINITIONS
+    }
+
+
+def plan_component_spec(key: str) -> ComponentSpec:
+    return component_spec(key)
+
+
+def workshop_component_spec(key: str) -> ComponentSpec:
+    specs = default_workshop_component_specs()
+    if key not in specs:
+        raise PlanledgerError(
+            "invalid_component",
+            f"Unknown workshop component key {key!r}.",
+            remediation=["Use one of: " + ", ".join(ordered_component_keys(specs))],
+        )
+    return specs[key]
+
+
+def preview_workshop_id(workspace: Workspace) -> str:
+    data = _ensure_workshop_storage_defaults(workspace)
+    return format_workshop_id(int(data.get("next_workshop_id", 1)))
+
+
+def allocate_workshop_id(workspace: Workspace) -> str:
+    data = _ensure_workshop_storage_defaults(workspace)
+    number = int(data.get("next_workshop_id", 1))
+    wid = format_workshop_id(number)
+    data["next_workshop_id"] = number + 1
+    data["updated_at"] = now_iso()
+    save_storage_data(workspace, data)
+    return wid
+
+
+def get_active_workshop_id(workspace: Workspace) -> str | None:
+    data = _ensure_workshop_storage_defaults(workspace)
+    return data.get("active_workshop_id") or None
+
+
+def set_active_workshop_id(workspace: Workspace, workshop_id: str | None) -> None:
+    data = _ensure_workshop_storage_defaults(workspace)
+    data["active_workshop_id"] = workshop_id or ""
+    data["updated_at"] = now_iso()
+    save_storage_data(workspace, data)
+
+
+def _normalize_workshop_id(workspace: Workspace, value: str) -> str:
+    try:
+        return normalize_workshop_selector(
+            value, ledger_code=ledger_code_from_config(workspace.config)
+        )
+    except IdFormatError as exc:
+        raise PlanledgerError(
+            "invalid_workshop_ref",
+            f"Invalid workshop reference {value!r}.",
+            remediation=["Use workshop-0001, pl:workshop-0001, or pl-workshop-0001."],
+        ) from exc
+
+
+def resolve_workshop_id(
+    workspace: Workspace, selector: str | None = None, positional: str | None = None
+) -> str:
+    raw = selector if selector is not None else positional
+    if raw is not None:
+        return _normalize_workshop_id(workspace, raw)
+    active = get_active_workshop_id(workspace)
+    if active:
+        return active
+    raise PlanledgerError(
+        "no_active_workshop", "No active workshop and no workshop selector provided."
+    )
+
+
+def _workshop_from_metadata(path: Path, metadata: dict[str, Any]) -> Workshop:
+    raw = metadata.get("components")
+    if not isinstance(raw, dict):
+        raise PlanledgerError(
+            "invalid_workshop", f"Workshop metadata at {path} is missing components."
+        )
+    comps: dict[str, ComponentSpec] = {}
+    for key, spec in raw.items():
+        if not isinstance(spec, dict):
+            raise PlanledgerError(
+                "invalid_workshop", f"Component metadata for {key!r} must be a mapping."
+            )
+        comps[key] = ComponentSpec(
+            key=key,
+            path=str(spec.get("path")),
+            title=str(spec.get("title")),
+            order=int(spec.get("order", 0)),
+            required=bool(spec.get("required", False)),
+            sha256=str(spec["sha256"]) if isinstance(spec.get("sha256"), str) else None,
+        )
+    return Workshop(str(metadata.get("id") or path.name), path, metadata, comps)
+
+
+def _write_workshop_metadata(workshop: Workshop) -> None:
+    workshop.metadata["components"] = {
+        k: _component_metadata(v)
+        for k, v in sorted(
+            workshop.components.items(), key=lambda item: (item[1].order, item[0])
+        )
+    }
+    _write_yaml(workshop_metadata_path_from_dir(workshop.path), workshop.metadata)
+
+
+def save_workshop_metadata(workshop: Workshop) -> None:
+    _write_workshop_metadata(workshop)
+
+
+def load_workshop(workspace: Workspace, workshop_id: str) -> Workshop:
+    workshop_id = _normalize_workshop_id(workspace, workshop_id)
+    path = workshop_dir(workspace, workshop_id)
+    if not path.exists():
+        raise PlanledgerError("not_found", f"Workshop {workshop_id} does not exist.")
+    return _workshop_from_metadata(
+        path, _load_yaml(workshop_metadata_path(workspace, workshop_id))
+    )
+
+
+def list_workshops(workspace: Workspace, status: str | None = None) -> list[Workshop]:
+    _ensure_workshop_storage_defaults(workspace)
+    result: list[Workshop] = []
+    if not workshops_dir(workspace).exists():
+        return result
+    for candidate in sorted(workshops_dir(workspace).iterdir()):
+        meta = workshop_metadata_path_from_dir(candidate)
+        if candidate.is_dir() and meta.exists():
+            workshop = _workshop_from_metadata(candidate, _load_yaml(meta))
+            if status is None or workshop.status == status:
+                result.append(workshop)
+    return result
+
+
+def activate_workshop(workspace: Workspace, workshop_id: str) -> Workshop:
+    workshop = load_workshop(workspace, workshop_id)
+    set_active_workshop_id(workspace, workshop.workshop_id)
+    return workshop
+
+
+def load_workshop_component_content(workshop: Workshop, component: str) -> str:
+    spec = workshop.components.get(component)
+    if spec is None:
+        workshop_component_spec(component)
+        raise AssertionError("unreachable")
+    try:
+        return (workshop.path / spec.path).read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise PlanledgerError(
+            "not_found", f"Component file does not exist: {workshop.path / spec.path}"
+        ) from exc
+
+
+def load_workshop_component_contents(workshop: Workshop) -> dict[str, str]:
+    return {
+        k: load_workshop_component_content(workshop, k)
+        for k in ordered_component_keys(workshop.components)
+    }
+
+
+def _validate_workshop_status(status: str) -> WorkshopStatus:
+    if status not in VALID_WORKSHOP_STATUSES:
+        raise PlanledgerError(
+            "invalid_status",
+            f"Invalid workshop status {status!r}.",
+            remediation=["Use one of: " + ", ".join(sorted(VALID_WORKSHOP_STATUSES))],
+        )
+    return status
+
+
+def validate_workshop(workshop: Workshop, *, for_shaped: bool = False) -> list[str]:
+    errors: list[str] = []
+    try:
+        _validate_workshop_status(workshop.status)
+    except PlanledgerError as exc:
+        errors.append(exc.message)
+    specs = default_workshop_component_specs()
+    for key in specs:
+        if key not in workshop.components:
+            errors.append(f"Missing component metadata for {key!r}.")
+    for key in workshop.components:
+        if key not in specs:
+            errors.append(f"Unknown component metadata for {key!r}.")
+    if for_shaped:
+        errors.extend(
+            validate_workshop_contents(load_workshop_component_contents(workshop))
+        )
+    return errors
+
+
+def create_workshop(
+    workspace: Workspace,
+    title: str,
+    request: str,
+    status: str = "new",
+    *,
+    components: dict[str, str] | None = None,
+) -> Workshop:
+    if not title.strip():
+        raise PlanledgerError("invalid_title", "Workshop title must not be empty.")
+    validated = _validate_workshop_status(status)
+    values = components or {}
+    for key in values:
+        workshop_component_spec(key)
+    wid = allocate_workshop_id(workspace)
+    created = now_iso()
+    path = workshop_dir(workspace, wid)
+    path.mkdir(parents=True, exist_ok=True)
+    specs = default_workshop_component_specs()
+    contents = {k: "" for k in specs}
+    contents["request"] = request
+    contents.update(values)
+    if validated == "shaped":
+        errs = validate_workshop_contents(contents)
+        if errs:
+            raise PlanledgerError(
+                "invalid_workshop",
+                "Cannot create a shaped workshop: validation failed.",
+                remediation=errs,
+            )
+    for key in ordered_component_keys(specs):
+        spec = specs[key]
+        spec.sha256 = _hash_text(contents[key])
+        _atomic_write(path / spec.path, contents[key])
+    meta: dict[str, Any] = {
+        "schema_version": 3,
+        "id": wid,
+        "kind": WORKSHOP_KIND,
+        "type": "workshop",
+        "title": title,
+        "status": validated,
+        "version": 1,
+        "created_at": created,
+        "updated_at": created,
+        "linked_plans": [],
+        "components": {
+            k: _component_metadata(v)
+            for k, v in sorted(specs.items(), key=lambda item: (item[1].order, item[0]))
+        },
+        "history": [
+            {
+                "version": 1,
+                "status": validated,
+                "created_at": created,
+                "reason": "Initial workshop",
+            }
+        ],
+    }
+    workshop = Workshop(wid, path, meta, specs)
+    _write_workshop_metadata(workshop)
+    snapshot_workshop_version(workshop)
+    set_active_workshop_id(workspace, wid)
+    return load_workshop(workspace, wid)
+
+
+def apply_workshop_mutations(
+    workspace: Workspace,
+    workshop_id: str,
+    *,
+    component_updates: dict[str, str] | None = None,
+    append_components: set[str] | None = None,
+    status: str | None = None,
+    reason: str | None = None,
+    force: bool = False,
+) -> Workshop:
+    workshop = load_workshop(workspace, workshop_id)
+    updates = component_updates or {}
+    append_keys = append_components or set()
+    for key in updates:
+        workshop_component_spec(key)
+    if workshop.status == "cancelled" and (updates or status) and not force:
+        raise PlanledgerError(
+            "cancelled_workshop",
+            f"Workshop {workshop.workshop_id} is cancelled and cannot be edited.",
+        )
+    current = load_workshop_component_contents(workshop)
+    nxt = dict(current)
+    changed = []
+    for key, value in updates.items():
+        content = _append_text(current[key], value) if key in append_keys else value
+        if content != current[key]:
+            nxt[key] = content
+            changed.append(key)
+    next_status = workshop.status
+    status_changed = False
+    if status is not None:
+        validated = _validate_workshop_status(status)
+        if (
+            validated != workshop.status
+            and validated not in VALID_WORKSHOP_TRANSITIONS[workshop.status]
+        ):
+            raise PlanledgerError(
+                "invalid_status_transition",
+                f"Cannot change workshop status from {workshop.status!r} to {validated!r}.",
+            )
+        if validated != workshop.status:
+            next_status = validated
+            status_changed = True
+    if next_status == "shaped":
+        errs = validate_workshop_contents(nxt)
+        if errs:
+            raise PlanledgerError(
+                "invalid_workshop",
+                "Cannot set workshop status to shaped: validation failed.",
+                remediation=errs,
+            )
+    if not changed and not status_changed:
+        return workshop
+    ts = now_iso()
+    for key in changed:
+        spec = workshop.components[key]
+        spec.sha256 = _hash_text(nxt[key])
+        _atomic_write(workshop.path / spec.path, nxt[key])
+    workshop.metadata["status"] = next_status
+    workshop.metadata["version"] = workshop.version + 1
+    workshop.metadata["updated_at"] = ts
+    history = workshop.metadata.setdefault("history", [])
+    if isinstance(history, list):
+        history.append(
+            {
+                "version": workshop.metadata["version"],
+                "status": next_status,
+                "created_at": ts,
+                "reason": reason.strip()
+                if isinstance(reason, str) and reason.strip()
+                else "Updated workshop.",
+            }
+        )
+    _write_workshop_metadata(workshop)
+    snapshot_workshop_version(workshop)
+    return load_workshop(workspace, workshop_id)
+
+
+def set_workshop_component(
+    workspace: Workspace,
+    workshop_id: str,
+    component: str,
+    content: str,
+    reason: str | None = None,
+    *,
+    force: bool = False,
+) -> Workshop:
+    return apply_workshop_mutations(
+        workspace,
+        workshop_id,
+        component_updates={component: content},
+        reason=reason,
+        force=force,
+    )
+
+
+def append_workshop_component(
+    workspace: Workspace,
+    workshop_id: str,
+    component: str,
+    content: str,
+    reason: str | None = None,
+    *,
+    force: bool = False,
+) -> Workshop:
+    return apply_workshop_mutations(
+        workspace,
+        workshop_id,
+        component_updates={component: content},
+        append_components={component},
+        reason=reason,
+        force=force,
+    )
+
+
+def set_workshop_status(
+    workspace: Workspace,
+    workshop_id: str,
+    status: str,
+    reason: str,
+    *,
+    force: bool = False,
+) -> Workshop:
+    if not reason.strip():
+        raise PlanledgerError("missing_reason", "Status changes require --reason.")
+    return apply_workshop_mutations(
+        workspace, workshop_id, status=status, reason=reason, force=force
+    )
+
+
+def snapshot_workshop_version(workshop: Workshop) -> Path:
+    target = workshop_version_snapshot_dir(workshop, workshop.version)
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        workshop_metadata_path_from_dir(workshop.path), target / "workshop.yaml"
+    )
+    shutil.copytree(workshop.path / "components", target / "components")
+    _write_yaml(
+        target / "manifest.yaml",
+        {
+            "workshop_id": workshop.workshop_id,
+            "version": workshop.version,
+            "status": workshop.status,
+            "generated_at": now_iso(),
+            "components": {
+                k: {"path": v.path, "sha256": v.sha256}
+                for k, v in sorted(
+                    workshop.components.items(),
+                    key=lambda item: (item[1].order, item[0]),
+                )
+            },
+        },
+    )
+    return target
+
+
+def list_workshop_versions(workshop: Workshop) -> list[str]:
+    d = workshop_versions_dir(workshop)
+    return [i.name for i in sorted(d.iterdir()) if i.is_dir()] if d.exists() else []
+
+
+def diff_workshop_versions(
+    workspace: Workspace, workshop_id: str, from_version: str, to_version: str
+) -> str:
+    workshop = load_workshop(workspace, workshop_id)
+    fd = workshop_version_snapshot_dir(workshop, parse_version(from_version))
+    td = workshop_version_snapshot_dir(workshop, parse_version(to_version))
+    if not fd.exists():
+        raise PlanledgerError(
+            "not_found", f"Snapshot {from_version} does not exist for {workshop_id}."
+        )
+    if not td.exists():
+        raise PlanledgerError(
+            "not_found", f"Snapshot {to_version} does not exist for {workshop_id}."
+        )
+    import difflib
+
+    lines: list[str] = []
+    before = _snapshot_files(fd)
+    after = _snapshot_files(td)
+    for rel in sorted(set(before) | set(after)):
+        lines.extend(
+            difflib.unified_diff(
+                before.get(rel, []),
+                after.get(rel, []),
+                fromfile=f"{from_version}/{rel}",
+                tofile=f"{to_version}/{rel}",
+            )
+        )
+    return "".join(lines) if lines else "No differences.\n"
+
+
+def workshop_to_dict(
+    workshop: Workshop, *, ledger_code: str = DEFAULT_LEDGER_CODE
+) -> dict[str, Any]:
+    ref = workshop_ref(workshop.workshop_id, ledger_code=ledger_code)
+    return {
+        "workshop_id": workshop.workshop_id,
+        "id": workshop.workshop_id,
+        "kind": WORKSHOP_KIND,
+        "ledger_code": ref.ledger,
+        "global_ref": ref.global_ref,
+        "file_ref": ref.file_ref,
+        "title": workshop.title,
+        "status": workshop.status,
+        "version": workshop.version,
+        "path": str(workshop.path),
+        "rendered_path": str(versioned_rendered_workshop_path(workshop)),
+        "latest_rendered_path": str(latest_rendered_workshop_path(workshop)),
+        "linked_plans": workshop.metadata.get("linked_plans", []),
+        "components": {
+            k: {
+                "title": v.title,
+                "path": v.path,
+                "order": v.order,
+                "required": v.required,
+                "sha256": v.sha256,
+            }
+            for k, v in sorted(
+                workshop.components.items(), key=lambda item: (item[1].order, item[0])
+            )
+        },
+        "history": workshop.metadata.get("history", []),
+    }
+
+
+def workshop_status_counts(workspace: Workspace) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for w in list_workshops(workspace):
+        counts[w.status] = counts.get(w.status, 0) + 1
+    return counts
+
+
+def create_plan_from_workshop(
+    workspace: Workspace,
+    workshop_id: str,
+    *,
+    title: str | None = None,
+    allow_unshaped: bool = False,
+    update_workshop_status: bool = True,
+) -> tuple[Plan, Workshop]:
+    workshop = load_workshop(workspace, workshop_id)
+    contents = load_workshop_component_contents(workshop)
+    if workshop.status != "shaped" and not allow_unshaped:
+        raise PlanledgerError(
+            "unshaped_workshop",
+            f"Workshop {workshop.workshop_id} must be shaped before creating a plan.",
+        )
+    errors = validate_workshop(workshop, for_shaped=True)
+    if errors and not allow_unshaped:
+        raise PlanledgerError(
+            "invalid_workshop",
+            f"Workshop {workshop.workshop_id} is not shaped enough for planning.",
+            remediation=errors,
+        )
+    ref = workshop_ref(workshop.workshop_id, ledger_code=workspace.ledger_code)
+    plan_components = {
+        "summary": f"Implementation plan derived from planning workshop `{workshop.workshop_id}` / `{ref.global_ref}`.\n\nWorkshop status: `{workshop.status}`.\n",
+        "context": f"## Source workshop\n\n- Workshop: `{workshop.workshop_id}`\n- Ref: `{ref.global_ref}`\n- Title: {workshop.title}\n\n## Story\n\n{contents.get('story', '').strip()}\n\n## Accepted scenarios\n\n{contents.get('acceptance_scenarios', '').strip()}\n",
+        "open_questions": "No unresolved required workshop questions at plan creation time.\n",
+        "approach": "Draft from workshop scope and accepted scenarios. The coding agent must inspect repository files before finalizing target files.\n",
+        "risks": contents.get("risks", ""),
+    }
+    plan = create_plan(
+        workspace,
+        title or f"Implement: {workshop.title}",
+        f"Create an implementation plan from workshop {workshop.workshop_id} / {ref.global_ref}.",
+        components=plan_components,
+    )
+    plan.metadata["source_workshop_id"] = workshop.workshop_id
+    plan.metadata["source_workshop_ref"] = ref.global_ref
+    save_plan_metadata(plan)
+    pref = plan_ref(plan.plan_id, ledger_code=workspace.ledger_code)
+    linked = workshop.metadata.setdefault("linked_plans", [])
+    if isinstance(linked, list):
+        linked.append(
+            {
+                "plan_id": plan.plan_id,
+                "global_ref": pref.global_ref,
+                "created_at": now_iso(),
+                "reason": "Created implementation plan from shaped workshop.",
+            }
+        )
+    save_workshop_metadata(workshop)
+    if update_workshop_status and workshop.status == "shaped":
+        workshop = set_workshop_status(
+            workspace,
+            workshop.workshop_id,
+            "planned",
+            "Created linked implementation plan.",
+        )
+    return load_plan(workspace, plan.plan_id), load_workshop(
+        workspace, workshop.workshop_id
     )
