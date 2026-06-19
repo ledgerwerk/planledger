@@ -16,7 +16,11 @@ from ledgercore.time import utc_now_iso
 from ledgercore.yamlio import load_yaml_object, write_yaml
 
 from planledger.errors import PlanledgerError
-from planledger.guardrails import validate_handoff_contents
+from planledger.guardrails import (
+    count_resolved_required_questions,
+    unresolved_required_questions,
+    validate_handoff_contents,
+)
 from planledger.identity import (
     DEFAULT_LEDGER_CODE,
     DEFAULT_LEDGER_NAME,
@@ -27,6 +31,11 @@ from planledger.identity import (
     plan_ref,
 )
 from planledger.models import AppContext, ComponentSpec, Plan, PlanStatus, Workspace
+from planledger.prompt_profiles import (
+    active_prompt_profile_for_plan,
+    load_prompt_profile,
+    prompt_profile_doctor_warnings,
+)
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -643,7 +652,49 @@ def _required_component_content_errors(
     return errors
 
 
-def validate_plan(plan: Plan, *, for_done: bool = False) -> list[str]:
+def _profile_done_errors(
+    workspace: Workspace,
+    plan: Plan,
+    contents: dict[str, str],
+) -> list[str]:
+    """Block done when an active profile requires resolved questions.
+
+    Returns no errors when no profile is active or the configured minimum is 0,
+    preserving the default permissive behavior.
+    """
+    profile = active_prompt_profile_for_plan(
+        workspace, plan, request_text=contents.get("request", "")
+    )
+    if profile is None or not profile.active:
+        # A configured-but-inactive profile still enforces its minimum only
+        # when active, because the resolved-question gate is plan-scoped.
+        configured = load_prompt_profile(
+            workspace.config, request_text=contents.get("request", "")
+        )
+        if not configured.enabled:
+            return []
+        profile = configured
+
+    required_count = profile.min_resolved_required_questions_before_done
+    if required_count <= 0:
+        return []
+
+    resolved = count_resolved_required_questions(contents.get("open_questions", ""))
+    if resolved < required_count:
+        return [
+            "Prompt profile 'planning_interview' requires "
+            f"{required_count} resolved required question(s) before done; "
+            f"found {resolved}."
+        ]
+    return []
+
+
+def validate_plan(
+    plan: Plan,
+    *,
+    for_done: bool = False,
+    workspace: Workspace | None = None,
+) -> list[str]:
     errors: list[str] = []
     try:
         _validate_status(plan.status)
@@ -660,6 +711,8 @@ def validate_plan(plan: Plan, *, for_done: bool = False) -> list[str]:
     if for_done:
         errors.extend(_required_component_content_errors(plan, contents))
         errors.extend(validate_handoff_contents(contents))
+        if workspace is not None:
+            errors.extend(_profile_done_errors(workspace, plan, contents))
     return errors
 
 
@@ -694,6 +747,7 @@ def create_plan(
         )
         done_errors = _required_component_content_errors(provisional_plan, contents)
         done_errors.extend(validate_handoff_contents(contents))
+        done_errors.extend(_profile_done_errors(workspace, provisional_plan, contents))
         if done_errors:
             raise PlanledgerError(
                 "invalid_plan",
@@ -814,6 +868,7 @@ def apply_plan_mutations(
     if next_status == "done":
         errors = _required_component_content_errors(plan, next_contents)
         errors.extend(validate_handoff_contents(next_contents))
+        errors.extend(_profile_done_errors(workspace, plan, next_contents))
         if errors:
             raise PlanledgerError(
                 "invalid_plan",
@@ -1081,6 +1136,7 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
             plan_errors = validate_plan(plan)
             for item in plan_errors:
                 errors.append(f"{plan.plan_id}: {item}")
+    warnings.extend(prompt_profile_doctor_warnings(workspace.config))
     return {
         "healthy": not errors,
         "errors": errors,
@@ -1152,7 +1208,20 @@ def compute_next_action(
                 }
 
     contents = load_component_contents(plan)
-    errors = validate_plan(plan, for_done=True)
+    request_text = contents.get("request", "")
+    configured_profile = load_prompt_profile(
+        workspace.config, request_text=request_text
+    )
+    profile_payload = (
+        configured_profile.to_dict() if configured_profile.enabled else None
+    )
+
+    def attach(result: dict[str, Any]) -> dict[str, Any]:
+        if profile_payload is not None:
+            result["prompt_profile"] = profile_payload
+        return result
+
+    errors = validate_plan(plan, for_done=True, workspace=workspace)
 
     empty_required = [
         key
@@ -1162,51 +1231,105 @@ def compute_next_action(
 
     if empty_required:
         first_empty = empty_required[0]
-        return {
-            "workspace_initialized": True,
-            "plan_id": plan.plan_id,
-            "status": plan.status,
-            "next_item": "fill_component",
-            "next_command": (
-                f"planledger plan component set {plan.plan_id} {first_empty} "
-                f"--file /tmp/{first_empty}.md"
-            ),
-            "blockers": [],
-            "validation_errors": errors,
-        }
+        return attach(
+            {
+                "workspace_initialized": True,
+                "plan_id": plan.plan_id,
+                "status": plan.status,
+                "next_item": "fill_component",
+                "next_command": (
+                    f"planledger plan component set {plan.plan_id} {first_empty} "
+                    f"--file /tmp/{first_empty}.md"
+                ),
+                "blockers": [],
+                "validation_errors": errors,
+            }
+        )
+
+    unresolved = unresolved_required_questions(contents.get("open_questions", ""))
+    if unresolved:
+        first_question = unresolved[0]
+        return attach(
+            {
+                "workspace_initialized": True,
+                "plan_id": plan.plan_id,
+                "status": plan.status,
+                "next_item": "answer_required_question",
+                "next_command": None,
+                "question": first_question,
+                "agent_instruction": (
+                    "Ask this one required question, include your recommended "
+                    "answer, and stop."
+                ),
+                "blockers": [],
+                "validation_errors": errors,
+            }
+        )
+
+    # While the planning interview profile is active, asking the next
+    # plan-quality question takes priority over remaining validation fixes
+    # because the interview drives the content that resolves them.
+    if (
+        configured_profile.enabled
+        and configured_profile.active
+        and plan.status not in ("done", "cancelled")
+    ):
+        return attach(
+            {
+                "workspace_initialized": True,
+                "plan_id": plan.plan_id,
+                "status": plan.status,
+                "next_item": "ask_plan_question",
+                "next_command": None,
+                "agent_instruction": (
+                    "Inspect the codebase first. Then ask exactly one unresolved "
+                    "plan-quality question, include your recommended answer, "
+                    "and stop."
+                ),
+                "blockers": [],
+                "validation_errors": errors,
+            }
+        )
 
     if errors:
-        return {
-            "workspace_initialized": True,
-            "plan_id": plan.plan_id,
-            "status": plan.status,
-            "next_item": "fix_validation",
-            "next_command": f"planledger plan validate {plan.plan_id}",
-            "blockers": errors,
-            "validation_errors": errors,
-        }
+        return attach(
+            {
+                "workspace_initialized": True,
+                "plan_id": plan.plan_id,
+                "status": plan.status,
+                "next_item": "fix_validation",
+                "next_command": f"planledger plan validate {plan.plan_id}",
+                "blockers": errors,
+                "validation_errors": errors,
+            }
+        )
 
     if plan.status == "done":
         rendered = latest_rendered_path(plan)
-        return {
+        return attach(
+            {
+                "workspace_initialized": True,
+                "plan_id": plan.plan_id,
+                "status": plan.status,
+                "next_item": "handoff_ready",
+                "next_command": f"planledger plan show {plan.plan_id} --rendered",
+                "blockers": [],
+                "validation_errors": [],
+                "rendered_path": str(rendered),
+            }
+        )
+
+    return attach(
+        {
             "workspace_initialized": True,
             "plan_id": plan.plan_id,
             "status": plan.status,
-            "next_item": "handoff_ready",
-            "next_command": f"planledger plan show {plan.plan_id} --rendered",
+            "next_item": "mark_done_after_human_approval",
+            "next_command": (
+                f"planledger plan status {plan.plan_id} "
+                'done --reason "Ready for handoff."'
+            ),
             "blockers": [],
             "validation_errors": [],
-            "rendered_path": str(rendered),
         }
-
-    return {
-        "workspace_initialized": True,
-        "plan_id": plan.plan_id,
-        "status": plan.status,
-        "next_item": "mark_done_after_human_approval",
-        "next_command": (
-            f'planledger plan status {plan.plan_id} done --reason "Ready for handoff."'
-        ),
-        "blockers": [],
-        "validation_errors": [],
-    }
+    )

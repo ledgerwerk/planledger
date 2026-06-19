@@ -90,4 +90,50 @@ workspace.
 .. code-block:: bash
 
    planledger plan export --plan plan-0004
+   planledger plan export --plan plan-0004
    # writes: ./plan-0004.md
+
+Planning interview profile
+--------------------------
+
+Planledger ships an optional prompt profile named ``planning_interview``.
+When enabled, the existing Planledger skill (the single
+``skills/planledger/SKILL.md``) asks the user one plan-quality question at a
+time, includes a recommended answer, inspects the repository first when
+possible, records required questions in ``open_questions``, and stops after
+each question. The CLI only parses, persists, and exposes the policy; it does
+not interview the user itself.
+
+Configure it in ``planledger.toml`` or ``.planledger.toml``:
+
+.. code-block:: toml
+
+   [prompt_profiles.planning_interview]
+   enabled = true
+   activation = "always"          # or "triggered"
+   question_policy = "ask_one_at_a_time"
+   codebase_first = true
+   include_recommended_answer = true
+   max_required_questions = 20
+   min_resolved_required_questions_before_done = 0
+   trigger_phrases = ["grill", "grill me", "stress-test this plan"]
+   required_question_topics = ["scope", "tests", "rollback", "risks"]
+
+With the profile active, the profile metadata and an agent instruction appear
+in the machine-readable steering command:
+
+.. code-block:: text
+
+   planledger status --json            # result.prompt_profiles lists the profile
+   planledger next-action --json       # result.prompt_profile + result.agent_instruction
+
+``next_item`` is one of:
+
+- ``ask_plan_question`` when the profile is active and no required component is empty.
+- ``answer_required_question`` when ``open_questions`` already holds an unresolved
+  ``- [ ] REQUIRED:`` line (only the first such question is surfaced).
+
+The phrase ``grill me`` is supported only as a trigger phrase for
+``activation = "triggered"``; ``planning_interview`` is the canonical feature
+name. The profile does not create planning-interview records, does not replace
+``open_questions``, and does not change Planledger's plan-only scope.

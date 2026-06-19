@@ -120,6 +120,30 @@ plan apply
 - If proceeding under assumptions, state the assumptions explicitly in the `assumptions` component.
 - Mark resolved required questions with `- [x] REQUIRED:` syntax so the guardrail allows `done`.
 
+## Planning interview profile protocol
+
+When `planledger next-action --json` returns `prompt_profile.name == "planning_interview"` and `prompt_profile.active == true`, ask exactly one question, include a recommended answer, then stop and wait for the user.
+
+Rules:
+
+- If the question can be answered by inspecting repository files, inspect the repository instead of asking the user.
+- Record each required question in the `open_questions` component as a `- [ ] REQUIRED:` line before or when you ask it.
+- Ask exactly one unresolved plan-quality question per turn and include a recommended answer immediately below it.
+- Do not ask multiple questions in one response.
+- When the user answers, update the line to `- [x] REQUIRED: <question> — Answer: <answer>`, then reflect the answer in `assumptions`, `approach`, `todo_items`, `target_files`, or `validation` when relevant.
+- Run `planledger next-action --json` again and ask the next question only if it reports another question is needed (`next_item == "ask_plan_question"` or `next_item == "answer_required_question"`).
+- When `next_item == "answer_required_question"`, ask only the surfaced `question`, include your recommended answer, and stop.
+
+This profile is an optional Planledger prompt profile obeyed by this single skill. It does not create a separate skill, it does not make the CLI interview the user itself, and it does not replace the `open_questions` component.
+
+Chat question format:
+
+```text
+Question: Should the new behavior be opt-in first, or become the default immediately?
+
+Recommended answer: Make it opt-in first to preserve compatibility and reduce release risk.
+```
+
 ## Component contract
 
 Each todo item in `todo_items` must use this structure:

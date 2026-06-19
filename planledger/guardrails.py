@@ -15,7 +15,10 @@ COMMAND_RE = re.compile(
     r"(?m)(?:`(?:python|pytest|ruff|mypy|planledger)[^`]+`|"
     r"^\s*(?:python|pytest|ruff|mypy|planledger)\b)"
 )
-UNRESOLVED_REQUIRED_QUESTION_RE = re.compile(r"(?im)^[-*]\s+\[\s\]\s+REQUIRED:")
+UNRESOLVED_REQUIRED_QUESTION_RE = re.compile(
+    r"(?im)^[-*]\s+\[\s\]\s+REQUIRED:\s*(?P<question>.+?)\s*$"
+)
+RESOLVED_REQUIRED_QUESTION_RE = re.compile(r"(?im)^[-*]\s+\[[xX]\]\s+REQUIRED:")
 
 
 def split_todo_blocks(text: str) -> list[str]:
@@ -102,3 +105,16 @@ def validate_handoff_contents(contents: dict[str, str]) -> list[str]:
         )
 
     return errors
+
+
+def unresolved_required_questions(text: str) -> list[str]:
+    """Return the unresolved (``- [ ] REQUIRED:``) question strings in order."""
+    return [
+        match.group("question").strip()
+        for match in UNRESOLVED_REQUIRED_QUESTION_RE.finditer(text or "")
+    ]
+
+
+def count_resolved_required_questions(text: str) -> int:
+    """Count resolved (``- [x] REQUIRED:``) questions in the text."""
+    return len(RESOLVED_REQUIRED_QUESTION_RE.findall(text or ""))

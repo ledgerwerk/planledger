@@ -7,4 +7,19 @@ name = "planledger"
 uuid = "7f8fa0cb-3b38-4de5-89d8-e268d2ff9061"
 
 [storage]
-planledger_dir = "../planledger-state/planledger"
+planledger_dir = "../ledger/plan/planledger"
+
+# Optional: Planledger prompt profile obeyed by skills/planledger/SKILL.md.
+# The CLI only parses and exposes this policy; it never interviews the user.
+# Uncomment to enable the planning interview loop (one question + recommended answer).
+#
+# [prompt_profiles.planning_interview]
+# enabled = true
+# activation = "always"             # or "triggered"
+# question_policy = "ask_one_at_a_time"
+# codebase_first = true
+# include_recommended_answer = true
+# max_required_questions = 20
+# min_resolved_required_questions_before_done = 0
+# trigger_phrases = ["grill", "grill me", "stress-test this plan"]
+# required_question_topics = ["scope", "tests", "rollback", "risks"]

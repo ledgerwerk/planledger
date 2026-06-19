@@ -19,5 +19,5 @@ cp -R ./skills/planledger ~/.agents/skills/planledger
 - exporting the rendered plan to the workspace root with `plan export`;
 - setting plan status to `done` only when guardrails pass and the human approves;
 - reporting plan id, version, status, rendered storage path, workspace export path, and validation result.
-- using local ``plan-000X`` ids for CLI work and ``pl:plan-000X`` when a plan
+- using local `plan-000X` ids for CLI work and `pl:plan-000X` when a plan
   needs a global cross-ledger reference.

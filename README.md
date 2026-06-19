@@ -297,6 +297,37 @@ planledger plan export --plan plan-0004
 # writes: ./plan-0004.md
 ```
 
+## Planning interview profile
+
+Planledger ships an optional prompt profile named `planning_interview`. When enabled, the existing **Planledger skill** (the single `skills/planledger/SKILL.md`) asks the user one plan-quality question at a time, includes a recommended answer, inspects the repository first when possible, records required questions in the `open_questions` component, and stops after each question.
+
+This is a prompt profile obeyed by the skill, not a separate skill and not a CLI command that interviews you. The CLI only parses, persists, and exposes the policy.
+
+Enable it in `planledger.toml` or `.planledger.toml`:
+
+```toml
+[prompt_profiles.planning_interview]
+enabled = true
+activation = "always"          # or "triggered"
+question_policy = "ask_one_at_a_time"
+codebase_first = true
+include_recommended_answer = true
+max_required_questions = 20
+min_resolved_required_questions_before_done = 0
+
+trigger_phrases = ["grill", "grill me", "stress-test this plan"]
+required_question_topics = ["scope", "tests", "rollback", "risks"]
+extra_guidance = """Interview the user until missing decisions are resolved. Ask exactly one question at a time and stop. Inspect the codebase first."""
+```
+
+- `activation = "always"` asks during every new or updated plan while useful.
+- `activation = "triggered"` activates only when the plan request contains one of `trigger_phrases`. The phrase `grill me` stays valid user language, but `planning_interview` is the canonical feature name.
+- When the profile is active, `planledger next-action --json` returns `next_item == "ask_plan_question"` with an `agent_instruction`, or `next_item == "answer_required_question"` when `open_questions` already contains an unresolved `- [ ] REQUIRED:` line.
+- `planledger status --json` exposes the configured profile under `prompt_profiles`.
+- When `min_resolved_required_questions_before_done` is a positive number, `done` is blocked until that many `- [x] REQUIRED:` questions exist (default `0` stays permissive). `planledger doctor` warns about unknown or invalid profile field values.
+
+The profile does not create planning-interview records, does not replace `open_questions`, and does not change Planledger's plan-only scope.
+
 ## Development
 
 ```bash

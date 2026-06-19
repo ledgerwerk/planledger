@@ -96,11 +96,7 @@ def test_plan_metadata_stores_kind_but_not_derived_identity(
 
     metadata = yaml.safe_load(
         (
-            initialized_workspace
-            / ".planledger"
-            / "plans"
-            / "plan-0001"
-            / "plan.yaml"
+            initialized_workspace / ".planledger" / "plans" / "plan-0001" / "plan.yaml"
         ).read_text()
     )
     assert metadata["kind"] == "plan"

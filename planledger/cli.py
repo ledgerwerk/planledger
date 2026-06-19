@@ -12,6 +12,7 @@ from planledger import __version__
 from planledger.bundle import apply_structured_plan_bundle, load_bundle
 from planledger.errors import PlanledgerError
 from planledger.models import AppContext, PlanStatus, Workspace
+from planledger.prompt_profiles import load_prompt_profile
 from planledger.render import build_plan
 from planledger.storage import (
     DEFAULT_PLANLEDGER_DIR,
@@ -294,6 +295,13 @@ def status(
         if check:
             health_result = {"checked": True, **doctor(workspace)}
 
+        profiles = [
+            load_prompt_profile(workspace.config).to_dict()
+            for profile_name in ("planning_interview",)
+            if load_prompt_profile(workspace.config, name=profile_name).enabled
+        ]
+        enabled_profile = load_prompt_profile(workspace.config)
+        profiles = [enabled_profile.to_dict()] if enabled_profile.enabled else []
         result = {
             "initialized": True,
             "root": str(workspace.root),
@@ -306,6 +314,7 @@ def status(
             "status_counts": status_counts,
             "active_plan": active_plan_info,
             "health": health_result,
+            "prompt_profiles": profiles,
         }
 
         lines = ["Planledger status"]
@@ -334,6 +343,9 @@ def status(
             lines.append(f"Health: {health}")
         else:
             lines.append("Health: not checked (use --check)")
+        if profiles:
+            hint = "active" if profiles[0].get("active") else "enabled"
+            lines.append(f"Prompt profile: {profiles[0]['name']} {hint}")
         lines.append("Next: planledger next-action")
 
         return result, "\n".join(lines)
@@ -814,6 +826,15 @@ def next_action(
             lines.append(f"status: {result['status']}")
         if result.get("next_command"):
             lines.append(f"next_command: {result['next_command']}")
+        if result.get("question"):
+            lines.append(f"question: {result['question']}")
+        if result.get("agent_instruction"):
+            lines.append(f"agent_instruction: {result['agent_instruction']}")
+        profile = result.get("prompt_profile")
+        if isinstance(profile, dict) and profile.get("enabled"):
+            lines.append(f"prompt_profile: {profile['name']} enabled")
+            if profile.get("active"):
+                lines.append("prompt_profile_active: true")
         for blocker in result.get("blockers", []):
             lines.append(f"blocker: {blocker}")
         for error in result.get("validation_errors", []):

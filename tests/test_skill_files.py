@@ -172,3 +172,31 @@ def test_skill_has_read_command_table() -> None:
     assert "planledger --json plan versions" in skill
     assert "planledger plan diff --from" in skill
     assert "planledger next-action" in skill
+
+
+def test_skill_documents_planning_interview_profile() -> None:
+    skill = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    skill_lower = skill.lower()
+
+    assert "## Planning interview profile protocol" in skill
+    assert 'prompt_profile.name == "planning_interview"' in skill
+    assert "ask exactly one question" in skill_lower
+    assert "include a recommended answer" in skill_lower
+    assert "inspect repository files" in skill_lower or (
+        "inspect the repository" in skill_lower
+    )
+    assert "stop and wait for the user" in skill_lower
+    assert "- [ ] REQUIRED:" in skill
+    assert "- [x] REQUIRED:" in skill
+    # No separate grilling / planning-interview skill is introduced.
+    assert "skills/grilling" not in skill_lower
+    assert "skills/planning-interview" not in skill_lower
+    assert "skills/design-review" not in skill_lower
+
+
+def test_no_separate_planning_interview_skill_directory() -> None:
+    skills_dir = REPO_ROOT / "skills"
+    for name in ("grilling", "planning-interview", "design-review"):
+        assert not (skills_dir / name).exists(), f"Unexpected skill dir: {name}"
