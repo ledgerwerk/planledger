@@ -51,7 +51,7 @@ Output always uses lowercase canonical refs. Foreign refs such as
    planledger plan create --title TITLE [--request TEXT | --request-file PATH | --stdin] [--status new|in_progress]
    planledger plan list [--status STATUS] [--json]
    planledger plan show PLAN_ID [--component KEY] [--rendered] [--json]
-   planledger plan status PLAN_ID STATUS --reason TEXT
+   planledger plan status STATUS [PLAN_ID] [--plan PLAN_ID] --reason TEXT
    planledger plan cancel PLAN_ID --reason TEXT
 
 Component editing
@@ -150,7 +150,7 @@ in the machine-readable steering command:
 .. code-block:: text
 
    planledger status --json            # result.prompt_profiles lists the profile
-   planledger next-action --json       # result.prompt_profile + result.agent_instruction
+   planledger --json next-action      # result.prompt_profile + result.agent_instruction
 
 ``next_item`` is one of:
 

@@ -12,6 +12,56 @@ def test_next_action_uninitialized() -> None:
     assert result["plan_id"] is None
 
 
+
+def test_next_action_accepts_command_local_json(
+    initialized_workspace: Path, invoke
+) -> None:
+    import json
+
+    create = invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Test",
+        "--request",
+        "Test request.",
+    )
+    assert create.exit_code == 0, create.stdout
+
+    # Command-local --json must work the same as root --json.
+    result = invoke(initialized_workspace, "next-action", "--json")
+    assert result.exit_code == 0, result.stdout
+
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["command"] == "next-action"
+    assert payload["result"]["next_item"] == "fill_component"
+
+
+def test_next_action_root_json_still_works(
+    initialized_workspace: Path, invoke
+) -> None:
+    import json
+
+    create = invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Test",
+        "--request",
+        "Test request.",
+    )
+    assert create.exit_code == 0, create.stdout
+
+    result = invoke(initialized_workspace, "--json", "next-action")
+    assert result.exit_code == 0, result.stdout
+
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["command"] == "next-action"
+
 def test_next_action_no_plans(tmp_path: Path) -> None:
     workspace = initialize_project(
         root=tmp_path, project_name="test", planledger_dir=".planledger"
@@ -67,6 +117,33 @@ def test_next_action_with_explicit_plan_id(initialized_workspace: Path, invoke) 
     assert payload["ok"] is True
     assert payload["result"]["plan_id"] == "plan-0001"
 
+
+
+def test_next_action_with_plan_option(initialized_workspace: Path, invoke) -> None:
+    import json
+
+    create = invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Test",
+        "--request",
+        "Test request.",
+    )
+    assert create.exit_code == 0, create.stdout
+
+    result = invoke(
+        initialized_workspace,
+        "--json",
+        "next-action",
+        "--plan",
+        "plan-0001",
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["result"]["plan_id"] == "plan-0001"
 
 def test_next_action_done_plan(initialized_workspace: Path, invoke) -> None:
     from tests.test_plan_status import _fill_required_components
@@ -299,3 +376,167 @@ def test_next_action_fill_component_beats_ask_plan_question(
     result = invoke(initialized_workspace, "--json", "next-action")
     payload = json.loads(result.stdout)
     assert payload["result"]["next_item"] == "fill_component"
+
+
+def _enable_planning_workshop_with_topics(
+    workspace: Path,
+    *,
+    topics: list[str] | None = None,
+    min_resolved: int = 0,
+    max_required: int = 20,
+) -> None:
+    config = workspace / "planledger.toml"
+    block = (
+        "\n[prompt_profiles.planning_workshop]\n"
+        "enabled = true\n"
+        'activation = "always"\n'
+        'question_policy = "ask_one_at_a_time"\n'
+        f"min_resolved_required_questions_before_done = {min_resolved}\n"
+        f"max_required_questions = {max_required}\n"
+    )
+    if topics is not None:
+        joined = ", ".join(f'"{t}"' for t in topics)
+        block += f"required_question_topics = [{joined}]\n"
+    config.write_text(config.read_text(encoding="utf-8") + block, encoding="utf-8")
+
+
+def test_next_action_surfaces_first_required_topic_question(
+    initialized_workspace: Path, invoke
+) -> None:
+    import json
+
+    from tests.test_plan_status import _fill_required_components
+
+    _enable_planning_workshop_with_topics(
+        initialized_workspace,
+        topics=["scope", "tests"],
+    )
+    invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Feature A",
+        "--request",
+        "Please plan feature A.",
+    )
+    _fill_required_components(initialized_workspace, invoke)
+
+    result = invoke(initialized_workspace, "--json", "next-action")
+    payload = json.loads(result.stdout)
+    res = payload["result"]
+    assert res["next_item"] == "ask_plan_question"
+    assert res["topic"] == "scope"
+    assert "question" in res and res["question"]
+    assert res["questions_remaining_count"] == 2
+    assert res["prompt_profile"]["required_question_topics"] == ["scope", "tests"]
+
+
+def test_next_action_advances_after_topic_resolved(
+    initialized_workspace: Path, invoke
+) -> None:
+    import json
+
+    from tests.test_plan_status import _fill_required_components
+
+    _enable_planning_workshop_with_topics(
+        initialized_workspace,
+        topics=["scope", "tests"],
+    )
+    invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Feature A",
+        "--request",
+        "Please plan feature A.",
+    )
+    _fill_required_components(initialized_workspace, invoke)
+    # Resolve the first topic.
+    invoke(
+        initialized_workspace,
+        "plan",
+        "component",
+        "set",
+        "open_questions",
+        "--text",
+        "- [x] REQUIRED(scope): Should we limit scope? Answer: minimal only.",
+    )
+
+    result = invoke(initialized_workspace, "--json", "next-action")
+    payload = json.loads(result.stdout)
+    res = payload["result"]
+    assert res["next_item"] == "ask_plan_question"
+    assert res["topic"] == "tests"
+    assert res["questions_remaining_count"] == 1
+
+
+def test_next_action_stops_asking_once_topics_resolved(
+    initialized_workspace: Path, invoke
+) -> None:
+    import json
+
+    from tests.test_plan_status import _fill_required_components
+
+    _enable_planning_workshop_with_topics(
+        initialized_workspace,
+        topics=["scope"],
+    )
+    invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Feature A",
+        "--request",
+        "Please plan feature A.",
+    )
+    _fill_required_components(initialized_workspace, invoke)
+    invoke(
+        initialized_workspace,
+        "plan",
+        "component",
+        "set",
+        "open_questions",
+        "--text",
+        "- [x] REQUIRED(scope): Should we limit scope? Answer: minimal only.",
+    )
+
+    result = invoke(initialized_workspace, "--json", "next-action")
+    payload = json.loads(result.stdout)
+    res = payload["result"]
+    # Topic queue exhausted and not in done state -> mark-done readiness.
+    assert res["next_item"] in {
+        "mark_done_after_human_approval",
+        "fix_validation",
+        "handoff_ready",
+    }
+    assert "topic" not in res
+
+
+def test_next_action_topic_queue_beats_generic_ask(
+    initialized_workspace: Path, invoke
+) -> None:
+    import json
+
+    from tests.test_plan_status import _fill_required_components
+
+    # planning_interview alias with no topics -> generic ask.
+    _enable_planning_interview(initialized_workspace)
+    invoke(
+        initialized_workspace,
+        "plan",
+        "create",
+        "--title",
+        "Feature A",
+        "--request",
+        "Please plan feature A.",
+    )
+    _fill_required_components(initialized_workspace, invoke)
+
+    result = invoke(initialized_workspace, "--json", "next-action")
+    payload = json.loads(result.stdout)
+    res = payload["result"]
+    assert res["next_item"] == "ask_plan_question"
+    assert "topic" not in res

@@ -179,3 +179,29 @@ def test_non_table_profile_block_is_disabled_with_warning() -> None:
     assert profile.enabled is False
     warnings = prompt_profile_doctor_warnings(config)
     assert any("must be a table mapping" in w for w in warnings)
+
+
+def test_required_topics_are_exposed_in_profile_payload() -> None:
+    config = {
+        "prompt_profiles": {
+            "planning_workshop": {
+                "enabled": True,
+                "activation": "always",
+                "required_question_topics": ["scope", "tests", "rollback", "risks"],
+                "max_required_questions": 12,
+                "min_resolved_required_questions_before_done": 1,
+            }
+        }
+    }
+    profile = load_prompt_profile(config, request_text="shape a feature")
+    assert profile.enabled is True
+    assert profile.active is True
+    payload = profile.to_dict()
+    assert payload["required_question_topics"] == [
+        "scope",
+        "tests",
+        "rollback",
+        "risks",
+    ]
+    assert payload["max_required_questions"] == 12
+    assert payload["min_resolved_required_questions_before_done"] == 1

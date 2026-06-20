@@ -17,9 +17,44 @@ COMMAND_RE = re.compile(
     r"^\s*(?:python|pytest|ruff|mypy|planledger)\b)"
 )
 UNRESOLVED_REQUIRED_QUESTION_RE = re.compile(
-    r"(?im)^[-*]\s+\[\s\]\s+REQUIRED:\s*(?P<question>.+?)\s*$"
+    r"(?im)^[-*]\s+\[\s\]\s+REQUIRED(?:\((?P<topic>[a-z0-9_-]+)\))?:\s*(?P<question>.+?)\s*$"
 )
-RESOLVED_REQUIRED_QUESTION_RE = re.compile(r"(?im)^[-*]\s+\[[xX]\]\s+REQUIRED:")
+RESOLVED_REQUIRED_QUESTION_RE = re.compile(
+    r"(?im)^[-*]\s+\[[xX]\]\s+REQUIRED(?:\([a-z0-9_-]+\))?:"
+)
+
+
+def resolved_required_question_topics(text: str) -> set[str]:
+    """Return the set of topics from resolved ``- [x] REQUIRED(topic):`` lines.
+
+    Resolved required questions without a topic tag are ignored here, because the
+    topic queue only tracks explicitly-tagged topics. Plain ``- [x] REQUIRED:``
+    lines still count toward ``count_resolved_required_questions``.
+    """
+    topics: set[str] = set()
+    for match in RESOLVED_REQUIRED_QUESTION_RE.finditer(text or ""):
+        topic = _required_topic_from_line(match.group(0))
+        if topic is not None:
+            topics.add(topic)
+    return topics
+
+
+def unresolved_required_question_topics(text: str) -> set[str]:
+    """Return the set of topics from unresolved ``- [ ] REQUIRED(topic):`` lines."""
+    topics: set[str] = set()
+    for match in UNRESOLVED_REQUIRED_QUESTION_RE.finditer(text or ""):
+        topic = match.group("topic")
+        if topic is not None:
+            topics.add(topic)
+    return topics
+
+
+def _required_topic_from_line(line: str) -> str | None:
+    """Extract a topic tag from a required-question line, or None when untagged."""
+    match = re.search(r"REQUIRED\(([a-z0-9_-]+)\):", line or "", flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return match.group(1).lower()
 
 
 def split_todo_blocks(text: str) -> list[str]:

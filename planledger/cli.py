@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import typer
 
@@ -907,18 +908,85 @@ def plan_show(
     _run_command(ctx, "plan.show", run)
 
 
+_VALID_PLAN_STATUS_ARGS: set[str] = {
+    "new",
+    "in_progress",
+    "rework",
+    "cancelled",
+    "done",
+}
+
+
+def _parse_plan_status_args(
+    args: list[str],
+    *,
+    plan_opt: str | None,
+) -> tuple[str | None, PlanStatus]:
+    """Parse the variadic ``plan status`` positional arguments.
+
+    Accepts all of these shapes:
+
+    - ``STATUS`` (active plan implied)
+    - ``STATUS PLAN_ID``
+    - ``PLAN_ID STATUS``
+
+    The ``--plan`` option may supply the plan id for the ``STATUS`` and
+    ``STATUS PLAN_ID`` shapes.
+    """
+    remediation = [
+        "Run: planledger plan status done --reason REASON",
+        "Run: planledger plan status PLAN_ID done --reason REASON",
+        "Run: planledger plan status done --plan PLAN_ID --reason REASON",
+    ]
+
+    if len(args) == 1:
+        only = args[0]
+        if only not in _VALID_PLAN_STATUS_ARGS:
+            raise PlanledgerError(
+                "invalid_status_args",
+                "Expected STATUS or PLAN_ID STATUS.",
+                remediation=remediation,
+                exit_code=2,
+            )
+        return plan_opt, cast("PlanStatus", only)
+
+    if len(args) == 2:
+        first, second = args
+        first_is_status = first in _VALID_PLAN_STATUS_ARGS
+        second_is_status = second in _VALID_PLAN_STATUS_ARGS
+
+        if first_is_status and not second_is_status:
+            selected_plan = plan_opt or second
+            return selected_plan, cast("PlanStatus", first)
+
+        if second_is_status and not first_is_status:
+            selected_plan = plan_opt or first
+            return selected_plan, cast("PlanStatus", second)
+
+    raise PlanledgerError(
+        "invalid_status_args",
+        "Expected STATUS, PLAN_ID STATUS, or STATUS PLAN_ID.",
+        remediation=remediation,
+        exit_code=2,
+    )
+
+
 @plan_app.command("status")
 def plan_status_command(
     ctx: typer.Context,
-    plan_id: str | None = typer.Argument(None, help=ACTIVE_PLAN_HELP),
+    args: list[str] = typer.Argument(
+        ...,
+        metavar="[PLAN_ID] STATUS",
+        help="New status, optionally with a plan id.",
+    ),
     plan_opt: str | None = typer.Option(None, "--plan", help=PLAN_OVERRIDE_HELP),
-    status: PlanStatus = typer.Argument(..., help="New status"),
     reason: str = typer.Option(..., "--reason", help="Reason for the status change"),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
-        resolved = resolve_plan_id(workspace, explicit=plan_opt, positional=plan_id)
-        updated = set_plan_status(workspace, resolved, status, reason)
+        parsed_plan, parsed_status = _parse_plan_status_args(args, plan_opt=plan_opt)
+        resolved = resolve_plan_id(workspace, explicit=parsed_plan, positional=None)
+        updated = set_plan_status(workspace, resolved, parsed_status, reason)
         built = build_plan(workspace, updated.plan_id)
         return built, _summary_message(built, "Updated")
 
@@ -1228,11 +1296,23 @@ def plan_apply(
 def next_action(
     ctx: typer.Context,
     plan_id: str | None = typer.Argument(None, help="Plan id"),
+    plan_opt: str | None = typer.Option(None, "--plan", help=PLAN_OVERRIDE_HELP),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit JSON envelope. Equivalent to root --json for this command.",
+    ),
 ) -> None:
+    if json_output:
+        # Agents naturally place flags after the subcommand. Accept the
+        # command-local --json form and force JSON output for this run.
+        ctx.obj = replace(_context(ctx), json_output=True)
+    selected_plan = plan_opt if plan_opt is not None else plan_id
+
     def run() -> tuple[dict[str, Any], str]:
         app_ctx = _context(ctx)
         workspace = discover_workspace(app_ctx)
-        result = compute_next_action(workspace, plan_id)
+        result = compute_next_action(workspace, selected_plan)
         lines = [f"next_item: {result['next_item']}"]
         if result.get("plan_id"):
             lines.append(f"plan_id: {result['plan_id']}")

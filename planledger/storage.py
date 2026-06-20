@@ -19,6 +19,8 @@ from ledgercore.yamlio import load_yaml_object, write_yaml
 from planledger.errors import PlanledgerError
 from planledger.guardrails import (
     count_resolved_required_questions,
+    resolved_required_question_topics,
+    unresolved_required_question_topics,
     unresolved_required_questions,
     validate_handoff_contents,
     validate_workshop_contents,
@@ -68,6 +70,35 @@ VALID_STATUSES: set[PlanStatus] = {
     "cancelled",
     "done",
 }
+
+# Default one-question-per-topic prompts surfaced by ``compute_next_action``
+# when a configured ``required_question_topics`` entry has no recorded question yet.
+_DEFAULT_PLAN_QUESTIONS_BY_TOPIC: dict[str, str] = {
+    "scope": (
+        "Should this plan include only the minimal implementation path, "
+        "or also documentation and migration cleanup?"
+    ),
+    "tests": (
+        "Which validation level is required before handoff: focused tests only, "
+        "the full test suite, or manual CLI smoke checks as well?"
+    ),
+    "rollback": (
+        "What rollback or repair path should the implementation preserve if "
+        "the change fails?"
+    ),
+    "risks": (
+        "Which risk should be optimized for first: compatibility, "
+        "implementation speed, or completeness?"
+    ),
+}
+
+
+def _default_question_for_topic(topic: str) -> str:
+    """Return the default question text for a configured required-question topic."""
+    return _DEFAULT_PLAN_QUESTIONS_BY_TOPIC.get(
+        topic,
+        f"What open decision remains for the '{topic}' topic before this plan can be done?",
+    )
 VALID_TRANSITIONS: dict[PlanStatus, set[PlanStatus]] = {
     "new": {"in_progress", "rework", "cancelled", "done"},
     "in_progress": {"rework", "cancelled", "done"},
@@ -1351,30 +1382,76 @@ def compute_next_action(
             }
         )
 
-    # While the planning interview profile is active, asking the next
-    # plan-quality question takes priority over remaining validation fixes
-    # because the interview drives the content that resolves them.
+    # While the planning-workshop / planning-interview profile is active, the
+    # configured required-question topics form a deterministic interview queue.
+    # Surface the next unmet topic as an explicit question before falling back
+    # to the generic plan-quality prompt. This drives the content that resolves
+    # most validation findings, so it takes priority over remaining fixes.
     if (
         configured_profile.enabled
         and configured_profile.active
         and plan.status not in ("done", "cancelled")
     ):
-        return attach(
-            {
-                "workspace_initialized": True,
-                "plan_id": plan.plan_id,
-                "status": plan.status,
-                "next_item": "ask_plan_question",
-                "next_command": None,
-                "agent_instruction": (
-                    "Inspect the codebase first. Then ask exactly one unresolved "
-                    "plan-quality question, include your recommended answer, "
-                    "and stop."
-                ),
-                "blockers": [],
-                "validation_errors": errors,
-            }
+        open_questions_text = contents.get("open_questions", "")
+        resolved_topics = resolved_required_question_topics(open_questions_text)
+        unresolved_topics = unresolved_required_question_topics(open_questions_text)
+        resolved_required_count = count_resolved_required_questions(open_questions_text)
+        topics_remaining = [
+            topic
+            for topic in configured_profile.required_question_topics
+            if topic not in resolved_topics and topic not in unresolved_topics
+        ]
+        all_configured_topics_resolved = bool(
+            configured_profile.required_question_topics
+        ) and set(configured_profile.required_question_topics).issubset(
+            resolved_topics
         )
+        max_reached = (
+            resolved_required_count >= configured_profile.max_required_questions
+        )
+
+        if topics_remaining:
+            topic = topics_remaining[0]
+            question = _default_question_for_topic(topic)
+            return attach(
+                {
+                    "workspace_initialized": True,
+                    "plan_id": plan.plan_id,
+                    "status": plan.status,
+                    "next_item": "ask_plan_question",
+                    "topic": topic,
+                    "question": question,
+                    "next_command": None,
+                    "resolved_required_questions_count": resolved_required_count,
+                    "questions_remaining_count": len(topics_remaining),
+                    "agent_instruction": (
+                        f"Record this as '- [ ] REQUIRED({topic}): ...', ask exactly "
+                        "this one question, include a recommended answer, and stop."
+                    ),
+                    "blockers": [],
+                    "validation_errors": errors,
+                }
+            )
+
+        # Generic plan-quality prompt: only when no configured topics remain
+        # unresolved and the resolved-question budget has not been spent.
+        if not all_configured_topics_resolved and not max_reached:
+            return attach(
+                {
+                    "workspace_initialized": True,
+                    "plan_id": plan.plan_id,
+                    "status": plan.status,
+                    "next_item": "ask_plan_question",
+                    "next_command": None,
+                    "agent_instruction": (
+                        "Inspect the codebase first. Then ask exactly one unresolved "
+                        "plan-quality question, include your recommended answer, "
+                        "and stop."
+                    ),
+                    "blockers": [],
+                    "validation_errors": errors,
+                }
+            )
 
     if errors:
         return attach(

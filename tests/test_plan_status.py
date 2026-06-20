@@ -255,3 +255,128 @@ def test_plan_no_active_plan_no_selector_fails(
     assert (
         "no active plan" in result.stdout.lower() or "no_active_plan" in result.stdout
     )
+
+
+def _create_and_fill_plan(workspace: Path, invoke) -> str:
+    create = invoke(
+        workspace,
+        "plan",
+        "create",
+        "--title",
+        "Add feature",
+        "--request",
+        "Request.",
+    )
+    assert create.exit_code == 0, create.stdout
+    _fill_required_components(workspace, invoke)
+    return "plan-0001"
+
+
+def test_status_accepts_active_plan_status_first(
+    initialized_workspace: Path, invoke
+) -> None:
+    _create_and_fill_plan(initialized_workspace, invoke)
+
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "status",
+        "done",
+        "--reason",
+        "Ready.",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Updated plan-0001 (done" in result.stdout
+
+
+def test_status_accepts_status_first_with_plan_option(
+    initialized_workspace: Path, invoke
+) -> None:
+    _create_and_fill_plan(initialized_workspace, invoke)
+
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "status",
+        "done",
+        "--plan",
+        "plan-0001",
+        "--reason",
+        "Ready.",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Updated plan-0001 (done" in result.stdout
+
+
+def test_status_accepts_status_first_with_plan_positional(
+    initialized_workspace: Path, invoke
+) -> None:
+    _create_and_fill_plan(initialized_workspace, invoke)
+
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "status",
+        "done",
+        "plan-0001",
+        "--reason",
+        "Ready.",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Updated plan-0001 (done" in result.stdout
+
+
+def test_status_keeps_legacy_plan_first_form(
+    initialized_workspace: Path, invoke
+) -> None:
+    _create_and_fill_plan(initialized_workspace, invoke)
+
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "status",
+        "plan-0001",
+        "done",
+        "--reason",
+        "Ready.",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Updated plan-0001 (done" in result.stdout
+
+
+def test_status_invalid_args_produce_clear_remediation(
+    initialized_workspace: Path, invoke
+) -> None:
+    _create_and_fill_plan(initialized_workspace, invoke)
+
+    # Two plan ids, no status.
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "status",
+        "plan-0001",
+        "plan-0002",
+        "--reason",
+        "Ready.",
+    )
+    assert result.exit_code == 2
+    assert "invalid_status_args" in result.stdout
+    assert "planledger plan status done" in result.stdout
+
+
+def test_status_missing_status_arg_produces_clear_remediation(
+    initialized_workspace: Path, invoke
+) -> None:
+    _create_and_fill_plan(initialized_workspace, invoke)
+
+    # One positional that is not a status (looks like a plan id only).
+    result = invoke(
+        initialized_workspace,
+        "plan",
+        "status",
+        "plan-0001",
+        "--reason",
+        "Ready.",
+    )
+    assert result.exit_code == 2
+    assert "invalid_status_args" in result.stdout

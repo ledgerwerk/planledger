@@ -62,7 +62,7 @@ plan apply
 
 1. Run `planledger --json status`. Treat `result.config_path`, `result.planledger_dir`, and `result.storage_path` as authoritative when present.
 2. If no config is found, run `planledger init`. If config exists but storage is missing, run `planledger doctor` and report the configured missing path; do not claim the config filename is invalid merely because it is `.planledger.toml`.
-3. Run `planledger next-action [--json]` to get the recommended next step for the active plan.
+3. Run `planledger --json next-action [--plan PLAN_ID]` to get the recommended next step for the active plan. Use this root `--json` form; the flag may also be placed after the subcommand.
 4. Run `planledger --json plan list` when you need a workspace-wide plan overview.
 5. If the user named a plan id, inspect it with `planledger --json plan show --plan PLAN_ID`.
 6. If the user did not name a plan id and requested new planning work, create a new independent plan. The new plan becomes active.
@@ -79,6 +79,40 @@ plan apply
   `al:adr-0002`, `sw:spec-0003`, and `pl:plan-0004`.
 - Cross-ledger refs are identifiers or links only. They do not make Planledger
   a task manager or external task-manager integration.
+
+## Routing protocol: workshop vs plan
+
+Use a workshop first when the user is shaping a feature, exploring requirements,
+asking for examples, discussing behavior, or the implementation scope is not yet
+clear.
+
+Use a plan directly when the user explicitly asks for an implementation plan, a
+coding-agent handoff, a `PLAN.md`-style artifact, a revision of an existing
+`plan-000X`, or provides enough scope that the next useful step is implementation
+planning.
+
+Do not ask the user which mode to use unless both paths are equally valid and the
+request cannot be safely interpreted. Prefer workshop-first when
+`prompt_profiles.planning_workshop.enabled = true` and the request is product or
+behavior shaping.
+
+Workshop-first skeleton (when shaping):
+
+```bash
+planledger workshop create --title "Shape: <feature>" --request "..."
+planledger workshop component set story --stdin --reason "Capture user intent."
+planledger workshop component set examples --stdin --reason "Capture concrete examples."
+planledger --json next-action
+planledger workshop status workshop-000X shaped --reason "Scope and examples are clear."
+planledger plan create --from-workshop workshop-000X --title "Implement: <feature>"
+```
+
+Plan-direct skeleton (when the request is already implementation-oriented):
+
+```bash
+planledger plan create --title "Short title" --request "Original request"
+```
+
 
 ## Planning protocol
 
@@ -112,6 +146,29 @@ plan apply
    - `planledger plan export`
    - Include the exported workspace path in the final response.
 
+
+
+## next-action checkpoint protocol
+
+After every state-changing Planledger command group (create, apply, build, component
+set, answer), run the canonical checkpoint and treat it as the control point:
+
+```bash
+planledger --json next-action --plan PLAN_ID
+```
+
+Map the returned `next_item` to behavior:
+
+- `fill_component`: populate the named component.
+- `answer_required_question`: ask only the surfaced `question` and stop.
+- `ask_plan_question`: when it carries a `topic`, record `- [ ] REQUIRED(topic): ...`, ask exactly that one question with a recommended answer, and stop. When it has no `topic`, ask exactly one unresolved plan-quality question and stop.
+- `fix_validation`: fix the named blocker, then rebuild and revalidate.
+- `mark_done_after_human_approval`: only then run the done gate (after validation passes and the human has approved or explicitly requested a finished handoff).
+- `handoff_ready`: export/report the rendered artifact.
+- `create_plan` / `specify_plan` / `init`: follow the surfaced `next_command`.
+
+Do not mark a plan `done` until `next-action` indicates done-readiness (`mark_done_after_human_approval` or `handoff_ready`) after `plan build` and `plan validate` both pass and the human has approved.
+
 ## Question protocol
 
 - If required decisions are missing, write them to `open_questions`, ask the user in chat, and stop.
@@ -122,7 +179,7 @@ plan apply
 
 ## Planning interview profile protocol
 
-When `planledger next-action --json` returns `prompt_profile.name == "planning_workshop" (deprecated alias: prompt_profile.name == "planning_interview")` and `prompt_profile.active == true`, ask exactly one question, include a recommended answer, then stop and wait for the user.
+When `planledger --json next-action` returns `prompt_profile.name == "planning_workshop" (deprecated alias: prompt_profile.name == "planning_interview")` and `prompt_profile.active == true`, ask exactly one question, include a recommended answer, then stop and wait for the user.
 
 Rules:
 
@@ -131,7 +188,7 @@ Rules:
 - Ask exactly one unresolved plan-quality question per turn and include a recommended answer immediately below it.
 - Do not ask multiple questions in one response.
 - When the user answers, update the line to `- [x] REQUIRED: <question> — Answer: <answer>`, then reflect the answer in `assumptions`, `approach`, `todo_items`, `target_files`, or `validation` when relevant.
-- Run `planledger next-action --json` again and ask the next question only if it reports another question is needed (`next_item == "ask_plan_question"` or `next_item == "answer_required_question"`).
+- Run `planledger --json next-action --plan PLAN_ID` again and ask the next question only if it reports another question is needed (`next_item == "ask_plan_question"` or `next_item == "answer_required_question"`).
 - When `next_item == "answer_required_question"`, ask only the surfaced `question`, include your recommended answer, and stop.
 
 This profile is an optional Planledger prompt profile obeyed by this single skill. It does not create a separate skill, it does not make the CLI interview the user itself, and it does not replace the `open_questions` component.
@@ -206,11 +263,11 @@ planledger plan build
 planledger plan validate
 ```
 
-Use `planledger plan apply --file plan.json --dry-run` before applying a bundle.
+Use `planledger plan apply --file - --dry-run` before large multi-component updates or when the JSON is hand-written. For small targeted updates, direct `planledger plan apply --file -` is acceptable.
 
-Use bundles for batch creation/update only when they make the operation clearer than individual component commands.
+Use bundles for batch creation/update only when they make the operation clearer than individual component commands. Do not force temporary files just to dry-run JSON; prefer stdin with `--file -`.
 
-Prefer `plan apply --file -` for multi-component population without temporary files:
+Prefer `planledger plan apply --file -` for multi-component population without temporary files:
 
 ```bash
 cat <<'JSON' | planledger plan apply --file -
@@ -238,7 +295,7 @@ JSON
 | --------------------- | --------------------------------------------------------- |
 | Workspace overview    | `planledger --json status`                                |
 | Health check          | `planledger --json doctor` or `planledger status --check` |
-| Recommended next step | `planledger next-action [--json]`                         |
+| Recommended next step | `planledger --json next-action [--plan PLAN_ID]`          |
 | List plans            | `planledger --json plan list`                             |
 | Show active plan      | `planledger --json plan show`                             |
 | Show specific plan    | `planledger --json plan show --plan PLAN_ID`              |
@@ -281,6 +338,8 @@ Run `planledger plan export` before the final response so the workspace export p
 
 ```bash
 planledger --json status
+planledger next-action          # human-readable next step (TTY)
+planledger --json next-action --plan plan-0001   # machine-readable checkpoint
 planledger status --check
 planledger init
 planledger --json plan list

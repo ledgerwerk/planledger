@@ -91,7 +91,7 @@ planledger plan status done --reason "Ready for coding agent handoff."
 # Export rendered plan to workspace root for the harness
 planledger plan export
 
-New planning request equals new independent plan unless the user names an existing `plan-000X`.
+Use a **workshop** first when a request is about shaping a feature, finding examples, clarifying behavior, product rules, BDD scenarios, acceptance scenarios, or requirement exploration. Use a **plan** directly when the request is implementation-oriented, asks for a coding-agent handoff, names target files, revises an existing `plan-000X`, or explicitly asks for a PLAN.md-style artifact. Do not ask which mode to use unless both paths are equally valid; prefer workshop-first when `prompt_profiles.planning_workshop.enabled = true` and the request is product or behavior shaping.
 
 ## Todo item template
 
@@ -278,11 +278,19 @@ planledger info --no-components       # drop per-component fill-state
 
 ## Structured bundle workflow
 
-Agents can create or update plans through `planledger.structured_plan.v1` bundles:
+Agents can create or update plans through `planledger.structured_plan.v1` bundles.
+Use `plan apply --file - --dry-run` before large multi-component updates or when
+the JSON is hand-written. For small targeted updates, direct `plan apply --file -`
+is acceptable and does not require a temporary file:
 
 ```bash
-planledger plan apply --file plan.json --dry-run
-planledger plan apply --file plan.json
+cat <<'JSON' | planledger plan apply --file - --dry-run
+{ "schema": "planledger.structured_plan.v1", "operation": "update", "plan_id": "plan-0001", "components": { "summary": "..." } }
+JSON
+
+cat <<'JSON' | planledger plan apply --file -
+{ "schema": "planledger.structured_plan.v1", "operation": "update", "plan_id": "plan-0001", "components": { "summary": "..." } }
+JSON
 ```
 
 ## Stdin input
@@ -337,7 +345,7 @@ extra_guidance = """Interview the user until missing decisions are resolved. Ask
 
 - `activation = "always"` asks during every new or updated plan while useful.
 - `activation = "triggered"` activates only when the plan request contains one of `trigger_phrases`. The phrase `shape this feature` stays valid user language, but `planning_workshop` is the canonical feature name.
-- When the profile is active, `planledger next-action --json` returns `next_item == "ask_plan_question"` with an `agent_instruction`, or `next_item == "answer_required_question"` when `open_questions` already contains an unresolved `- [ ] REQUIRED:` line.
+- When the profile is active, `planledger --json next-action` returns `next_item == "ask_plan_question"` with an `agent_instruction`, or `next_item == "answer_required_question"` when `open_questions` already contains an unresolved `- [ ] REQUIRED:` line.
 - `planledger status --json` exposes the configured profile under `prompt_profiles`.
 - When `min_resolved_required_questions_before_done` is a positive number, `done` is blocked until that many `- [x] REQUIRED:` questions exist (default `0` stays permissive). `planledger doctor` warns about unknown or invalid profile field values.
 

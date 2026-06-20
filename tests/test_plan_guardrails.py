@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from planledger.guardrails import validate_handoff_contents
+from planledger.guardrails import (
+    count_resolved_required_questions,
+    resolved_required_question_topics,
+    unresolved_required_question_topics,
+    unresolved_required_questions,
+    validate_handoff_contents,
+)
 
 
 def _valid_contents() -> dict[str, str]:
@@ -374,3 +380,37 @@ def test_min_resolved_required_questions_blocks_done_until_resolved(
         "Ready.",
     )
     assert allowed.exit_code == 0, allowed.stdout
+
+
+def test_required_question_regex_accepts_topic_tags() -> None:
+    text = (
+        "- [ ] REQUIRED(scope): Should we limit scope?\n"
+        "- [ ] REQUIRED: Plain unresolved?\n"
+        "- [x] REQUIRED(tests): Which tests? Answer: full suite.\n"
+        "- [x] REQUIRED: Plain resolved.\n"
+    )
+    assert unresolved_required_questions(text) == [
+        "Should we limit scope?",
+        "Plain unresolved?",
+    ]
+    assert count_resolved_required_questions(text) == 2
+    assert unresolved_required_question_topics(text) == {"scope"}
+    assert resolved_required_question_topics(text) == {"tests"}
+
+
+def test_topic_tagged_required_questions_still_block_done() -> None:
+    contents = _valid_contents()
+    contents["open_questions"] = (
+        "- [ ] REQUIRED(scope): Should we limit scope?"
+    )
+    errors = validate_handoff_contents(contents)
+    assert any("unresolved required questions" in e for e in errors)
+
+
+def test_resolved_topic_tagged_required_questions_pass_done() -> None:
+    contents = _valid_contents()
+    contents["open_questions"] = (
+        "- [x] REQUIRED(scope): Should we limit scope? Answer: minimal only."
+    )
+    errors = validate_handoff_contents(contents)
+    assert not any("unresolved required questions" in e for e in errors)

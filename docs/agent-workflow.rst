@@ -14,17 +14,33 @@ Step 1: Check status and initialize
 
 This creates a configured Planledger storage directory and a config file at the project root. The config file may be ``planledger.toml`` or ``.planledger.toml``; the storage directory may be outside the source repository when ``storage.planledger_dir`` points there.
 
-Step 2: Create a plan
-----------------------
+Step 2: Route to workshop or plan
+---------------------------------
 
-For every new planning request, create a new independent plan unless the user
-names an existing ``plan-000X``:
+Use a **workshop** when the request is about shaping a feature, finding
+examples, clarifying behavior, product rules, BDD scenarios, acceptance
+scenarios, or requirement exploration. Prefer workshop-first when the
+``planning_workshop`` prompt profile is enabled and the request is product or
+behavior shaping.
+
+Use a **plan** directly when the request is already implementation-oriented,
+asks for a coding-agent handoff, names target files, asks to revise an existing
+``plan-000X``, or explicitly says "create/update PLAN.md". Do not ask the user
+which mode to use unless both paths are equally valid and the request cannot be
+safely interpreted.
 
 .. code-block:: bash
 
+   # Requirement shaping path
+   planledger workshop create --title "Shape: <feature>" --request "Full request text"
+   planledger workshop component set story --stdin --reason "Capture user intent."
+   planledger workshop component set examples --stdin --reason "Capture concrete examples."
+   planledger workshop status workshop-000X shaped --reason "Scope and examples are clear."
+   planledger plan create --from-workshop workshop-000X --title "Implement: <feature>"
+
+   # Direct implementation-handoff path
    planledger plan create --title "Short description" \
        --request "Full request text"
-
 Use local ids in normal CLI examples. Global selectors such as
 ``pl:plan-0001`` are accepted when a plan is referenced across ledgers. The
 canonical global ref is derived and does not create task-manager integration.
@@ -98,14 +114,22 @@ Structured bundle workflow
 --------------------------
 
 Agents can also use the ``planledger.structured_plan.v1`` JSON bundle format
-to create or update plans in one step:
+to create or update plans in one step. Use ``plan apply --file - --dry-run``
+before large multi-component updates or when the JSON is hand-written. For
+small targeted updates, direct ``plan apply --file -`` is acceptable and does
+not require a temporary file:
 
 .. code-block:: bash
 
-   planledger plan apply --file plan.json --dry-run
-   planledger plan apply --file plan.json
+   cat <<'JSON' | planledger plan apply --file - --dry-run
+   { "schema": "planledger.structured_plan.v1", "operation": "update", "plan_id": "plan-0001", "components": { "summary": "..." } }
+   JSON
 
-Step 6: Optional planning interview
+   cat <<'JSON' | planledger plan apply --file -
+   { "schema": "planledger.structured_plan.v1", "operation": "update", "plan_id": "plan-0001", "components": { "summary": "..." } }
+   JSON
+
+Step 7: Optional planning interview
 ------------------------------------
 
 When the project enables the ``planning_workshop`` prompt profile, the coding
@@ -132,4 +156,3 @@ not interview the user.
 Required questions are recorded as ``- [ ] REQUIRED:`` lines and resolved as
 ``- [x] REQUIRED:`` lines in ``open_questions``. ``planning_workshop`` is the
 canonical feature name; ``shape this feature`` is only a trigger phrase.
-   planledger plan apply --file plan.json

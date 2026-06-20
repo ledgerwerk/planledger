@@ -200,3 +200,51 @@ def test_no_separate_planning_interview_skill_directory() -> None:
     skills_dir = REPO_ROOT / "skills"
     for name in ("grilling", "planning-interview", "design-review"):
         assert not (skills_dir / name).exists(), f"Unexpected skill dir: {name}"
+
+
+def test_skill_documents_next_action_checkpoint_loop() -> None:
+    skill = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    skill_lower = skill.lower()
+
+    assert "## next-action checkpoint protocol" in skill
+    assert "planledger --json next-action --plan PLAN_ID" in skill
+    assert "fill_component" in skill
+    assert "answer_required_question" in skill
+    assert "ask_plan_question" in skill
+    assert "fix_validation" in skill
+    assert "mark_done_after_human_approval" in skill
+    assert "handoff_ready" in skill
+    assert "do not mark a plan `done` until `next-action`" in skill_lower
+    assert "planledger next-action --json" not in skill
+
+
+def test_skill_documents_workshop_vs_plan_routing() -> None:
+    skill = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    skill_lower = skill.lower()
+
+    assert "## Routing protocol: workshop vs plan" in skill
+    assert "Use a workshop first" in skill
+    assert "Use a plan directly" in skill
+    assert "planledger workshop create" in skill
+    assert "planledger plan create --from-workshop" in skill
+    assert "coding-agent handoff" in skill_lower
+    assert "Do not ask the user which mode" in skill
+    assert "Prefer workshop-first" in skill
+
+
+def test_skill_documents_plan_apply_dry_run_policy() -> None:
+    skill = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    skill_lower = skill.lower()
+
+    assert "planledger plan apply --file - --dry-run" in skill
+    assert "large multi-component updates" in skill_lower
+    assert "json is hand-written" in skill_lower
+    assert "small targeted updates" in skill_lower
+    assert "direct `planledger plan apply --file -` is acceptable" in skill
+    assert "Do not force temporary files" in skill
