@@ -400,9 +400,7 @@ def test_required_question_regex_accepts_topic_tags() -> None:
 
 def test_topic_tagged_required_questions_still_block_done() -> None:
     contents = _valid_contents()
-    contents["open_questions"] = (
-        "- [ ] REQUIRED(scope): Should we limit scope?"
-    )
+    contents["open_questions"] = "- [ ] REQUIRED(scope): Should we limit scope?"
     errors = validate_handoff_contents(contents)
     assert any("unresolved required questions" in e for e in errors)
 

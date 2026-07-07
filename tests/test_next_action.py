@@ -12,7 +12,6 @@ def test_next_action_uninitialized() -> None:
     assert result["plan_id"] is None
 
 
-
 def test_next_action_accepts_command_local_json(
     initialized_workspace: Path, invoke
 ) -> None:
@@ -39,9 +38,7 @@ def test_next_action_accepts_command_local_json(
     assert payload["result"]["next_item"] == "fill_component"
 
 
-def test_next_action_root_json_still_works(
-    initialized_workspace: Path, invoke
-) -> None:
+def test_next_action_root_json_still_works(initialized_workspace: Path, invoke) -> None:
     import json
 
     create = invoke(
@@ -61,6 +58,7 @@ def test_next_action_root_json_still_works(
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["command"] == "next-action"
+
 
 def test_next_action_no_plans(tmp_path: Path) -> None:
     workspace = initialize_project(
@@ -118,7 +116,6 @@ def test_next_action_with_explicit_plan_id(initialized_workspace: Path, invoke) 
     assert payload["result"]["plan_id"] == "plan-0001"
 
 
-
 def test_next_action_with_plan_option(initialized_workspace: Path, invoke) -> None:
     import json
 
@@ -144,6 +141,7 @@ def test_next_action_with_plan_option(initialized_workspace: Path, invoke) -> No
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["result"]["plan_id"] == "plan-0001"
+
 
 def test_next_action_done_plan(initialized_workspace: Path, invoke) -> None:
     from tests.test_plan_status import _fill_required_components

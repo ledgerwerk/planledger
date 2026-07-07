@@ -99,6 +99,8 @@ def _default_question_for_topic(topic: str) -> str:
         topic,
         f"What open decision remains for the '{topic}' topic before this plan can be done?",
     )
+
+
 VALID_TRANSITIONS: dict[PlanStatus, set[PlanStatus]] = {
     "new": {"in_progress", "rework", "cancelled", "done"},
     "in_progress": {"rework", "cancelled", "done"},
@@ -1199,6 +1201,83 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
     }
 
 
+def _compute_active_workshop_next_action(workspace: Workspace) -> dict[str, Any] | None:
+    active_workshop_id = get_active_workshop_id(workspace)
+    if active_workshop_id is None:
+        return None
+
+    workshop = load_workshop(workspace, active_workshop_id)
+    contents = load_workshop_component_contents(workshop)
+    workshop_errors = validate_workshop(workshop, for_shaped=True)
+    unresolved = unresolved_required_questions(contents.get("open_questions", ""))
+    base = {
+        "workspace_initialized": True,
+        "workshop_id": workshop.workshop_id,
+        "workshop_status": workshop.status,
+        "plan_id": None,
+        "status": None,
+        "blockers": [],
+        "validation_errors": workshop_errors,
+    }
+    if unresolved:
+        return {
+            **base,
+            "next_item": "answer_required_workshop_question",
+            "next_command": None,
+            "question": unresolved[0],
+        }
+    profile = load_prompt_profile(workspace.config, name="planning_workshop")
+    if (
+        profile.enabled
+        and profile.active
+        and workshop.status
+        not in {
+            "shaped",
+            "planned",
+            "cancelled",
+        }
+    ):
+        return {
+            **base,
+            "next_item": "ask_workshop_question",
+            "next_command": None,
+            "prompt_profile": profile.to_dict(),
+            "agent_instruction": (
+                "Ask exactly one planning-workshop question, include a "
+                "recommended answer, record it in open_questions, and stop."
+            ),
+        }
+    if not contents.get("examples", "").strip():
+        return {
+            **base,
+            "next_item": "add_concrete_example",
+            "component": "examples",
+            "next_command": (
+                f"planledger workshop component set examples "
+                f"--workshop {workshop.workshop_id} --file examples.md"
+            ),
+        }
+    if not workshop_errors and workshop.status == "exploring":
+        return {
+            **base,
+            "next_item": "mark_workshop_shaped",
+            "next_command": (
+                f"planledger workshop status {workshop.workshop_id} shaped "
+                '--reason "Examples, scope, and scenarios are clear."'
+            ),
+        }
+    if workshop.status == "shaped" and not workshop.metadata.get("linked_plans"):
+        return {
+            **base,
+            "next_item": "create_plan_from_workshop",
+            "next_command": (
+                f"planledger plan create --from-workshop {workshop.workshop_id} "
+                f'--title "Implement: {workshop.title}"'
+            ),
+        }
+    return None
+
+
 def compute_next_action(
     workspace: Workspace | None, plan_id: str | None = None
 ) -> dict[str, Any]:
@@ -1217,72 +1296,10 @@ def compute_next_action(
             "validation_errors": [],
         }
 
-    active_workshop_id = get_active_workshop_id(workspace)
-    if plan_id is None and active_workshop_id is not None:
-        workshop = load_workshop(workspace, active_workshop_id)
-        contents = load_workshop_component_contents(workshop)
-        workshop_errors = validate_workshop(workshop, for_shaped=True)
-        unresolved = unresolved_required_questions(contents.get("open_questions", ""))
-        base = {
-            "workspace_initialized": True,
-            "workshop_id": workshop.workshop_id,
-            "workshop_status": workshop.status,
-            "plan_id": None,
-            "status": None,
-            "blockers": [],
-            "validation_errors": workshop_errors,
-        }
-        if unresolved:
-            return {
-                **base,
-                "next_item": "answer_required_workshop_question",
-                "next_command": None,
-                "question": unresolved[0],
-            }
-        profile = load_prompt_profile(workspace.config, name="planning_workshop")
-        if (
-            profile.enabled
-            and profile.active
-            and workshop.status not in {"shaped", "planned", "cancelled"}
-        ):
-            return {
-                **base,
-                "next_item": "ask_workshop_question",
-                "next_command": None,
-                "prompt_profile": profile.to_dict(),
-                "agent_instruction": (
-                    "Ask exactly one planning-workshop question, include a "
-                    "recommended answer, record it in open_questions, and stop."
-                ),
-            }
-        if not contents.get("examples", "").strip():
-            return {
-                **base,
-                "next_item": "add_concrete_example",
-                "component": "examples",
-                "next_command": (
-                    f"planledger workshop component set examples "
-                    f"--workshop {workshop.workshop_id} --file examples.md"
-                ),
-            }
-        if not workshop_errors and workshop.status == "exploring":
-            return {
-                **base,
-                "next_item": "mark_workshop_shaped",
-                "next_command": (
-                    f"planledger workshop status {workshop.workshop_id} shaped "
-                    '--reason "Examples, scope, and scenarios are clear."'
-                ),
-            }
-        if workshop.status == "shaped" and not workshop.metadata.get("linked_plans"):
-            return {
-                **base,
-                "next_item": "create_plan_from_workshop",
-                "next_command": (
-                    f"planledger plan create --from-workshop {workshop.workshop_id} "
-                    f'--title "Implement: {workshop.title}"'
-                ),
-            }
+    if plan_id is None:
+        workshop_action = _compute_active_workshop_next_action(workspace)
+        if workshop_action is not None:
+            return workshop_action
 
     plans = list_plans(workspace)
 
@@ -1403,9 +1420,7 @@ def compute_next_action(
         ]
         all_configured_topics_resolved = bool(
             configured_profile.required_question_topics
-        ) and set(configured_profile.required_question_topics).issubset(
-            resolved_topics
-        )
+        ) and set(configured_profile.required_question_topics).issubset(resolved_topics)
         max_reached = (
             resolved_required_count >= configured_profile.max_required_questions
         )
@@ -2257,9 +2272,7 @@ def collect_inventory(workspace: Workspace) -> dict[str, Any]:
     if not isinstance(project_cfg, dict):
         project_cfg = {}
     project_name = str(
-        data.get("project_name")
-        or project_cfg.get("name")
-        or workspace.root.name
+        data.get("project_name") or project_cfg.get("name") or workspace.root.name
     )
     project_uuid = str(data.get("project_uuid") or project_cfg.get("uuid") or "")
 

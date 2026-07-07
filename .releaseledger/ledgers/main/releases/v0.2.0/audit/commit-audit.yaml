@@ -1,0 +1,246 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 2
+release_version: v0.2.0
+git_base_ref: v0.1.0
+git_base_sha: 075453ccfcf52aca38285deeb4fb507dbf821e15
+git_head_ref: HEAD
+git_head_sha: 5003a3860f2035acf966f102e73b0ccf9483226b
+git_range: 075453ccfcf52aca38285deeb4fb507dbf821e15..5003a3860f2035acf966f102e73b0ccf9483226b
+commit_count: 6
+rows:
+  - sha: 00bdac020aa076029bf094cc26c6d9ba7f4feb94
+    source_ref: git:00bdac020aa076029bf094cc26c6d9ba7f4feb94
+    short_sha: 00bdac0
+    changed_paths:
+      - README.md
+    stats:
+      files_changed: 0
+      insertions: 5
+      deletions: 0
+    inspected: true
+    inspected_paths:
+      - README.md
+    observed_behavior:
+      README documents batch-oriented agent workflow capabilities for
+      release consumers.
+    public_impact: docs
+    decision: accepted
+    evidence_subject: "doc: add batches"
+    target_entry_key: documented-batch-agent-workflow-guidance
+  - sha: a31e46da474fc84091757957773942d0f37a6bf6
+    source_ref: git:a31e46da474fc84091757957773942d0f37a6bf6
+    short_sha: a31e46d
+    changed_paths:
+      - .taskledger.toml
+      - README.md
+      - docs/_static/.gitkeep
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - docs/contributing.rst
+      - docs/installation.rst
+      - docs/overview.rst
+      - docs/storage.rst
+      - examples/agent_plan_update_v1.json
+      - planledger.toml
+      - planledger/bundle.py
+      - planledger/cli.py
+      - planledger/identity.py
+      - planledger/models.py
+      - planledger/render.py
+      - planledger/storage.py
+      - pyproject.toml
+      - skills/planledger/README.md
+      - skills/planledger/SKILL.md
+      - tests/test_init.py
+      - tests/test_plan_bundle.py
+      - tests/test_plan_refs.py
+      - tests/test_skill_files.py
+    stats:
+      files_changed: 0
+      insertions: 490
+      deletions: 58
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/*.rst
+      - planledger.toml
+      - planledger/bundle.py
+      - planledger/identity.py
+      - planledger/models.py
+      - planledger/render.py
+      - planledger/storage.py
+      - pyproject.toml
+      - tests/test_plan_bundle.py
+      - tests/test_plan_refs.py
+    observed_behavior:
+      Plan references and rendered bundles gain LedgerCore-backed identity
+      and metadata, with documentation and tests covering storage, exports, and configuration.
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: depends now on ledgercore"
+    target_entry_key: ledgercore-backed-plan-identity-and-bundle-metadata
+  - sha: 5221c739eed0f752109f7e12e8db5b1588e35808
+    source_ref: git:5221c739eed0f752109f7e12e8db5b1588e35808
+    short_sha: 5221c73
+    changed_paths:
+      - .taskledger.toml
+      - README.md
+      - docs/_static/.gitkeep
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - planledger.toml
+      - planledger/cli.py
+      - planledger/guardrails.py
+      - planledger/prompt_profiles.py
+      - planledger/storage.py
+      - skills/planledger/README.md
+      - skills/planledger/SKILL.md
+      - tests/test_json_contract.py
+      - tests/test_next_action.py
+      - tests/test_plan_guardrails.py
+      - tests/test_plan_refs.py
+      - tests/test_prompt_profiles.py
+      - tests/test_skill_files.py
+    stats:
+      files_changed: 0
+      insertions: 1068
+      deletions: 51
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - planledger.toml
+      - planledger/cli.py
+      - planledger/guardrails.py
+      - planledger/prompt_profiles.py
+      - planledger/storage.py
+      - tests/test_next_action.py
+      - tests/test_prompt_profiles.py
+    observed_behavior:
+      Prompt profiles can drive deterministic planning questions through
+      next-action responses and guardrails, including CLI and config documentation and
+      JSON contract tests.
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: add interview question for better planning"
+    target_entry_key: prompt-profile-interview-flow-for-next-action-guidance
+  - sha: a95b7a683d1442dd5d12c395a5fd7bce18b9d310
+    source_ref: git:a95b7a683d1442dd5d12c395a5fd7bce18b9d310
+    short_sha: a95b7a6
+    changed_paths:
+      - .taskledger.toml
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - examples/agent_workshop_create_v1.md
+      - examples/agent_workshop_update_v1.md
+      - planledger.toml
+      - planledger/bundle.py
+      - planledger/cli.py
+      - planledger/guardrails.py
+      - planledger/identity.py
+      - planledger/models.py
+      - planledger/prompt_profiles.py
+      - planledger/render.py
+      - planledger/storage.py
+      - skills/planledger/README.md
+      - skills/planledger/SKILL.md
+    stats:
+      files_changed: 0
+      insertions: 1689
+      deletions: 41
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - examples/agent_workshop_create_v1.md
+      - examples/agent_workshop_update_v1.md
+      - planledger/bundle.py
+      - planledger/cli.py
+      - planledger/guardrails.py
+      - planledger/models.py
+      - planledger/render.py
+      - planledger/storage.py
+    observed_behavior:
+      Planning workshops become first-class CLI and storage objects
+      with components, validation, rendering, examples, and links to generated plans.
+    public_impact: public
+    decision: accepted
+    evidence_subject: "fest: planning workshop concept"
+    target_entry_key: first-class-planning-workshop-workflow
+  - sha: 032131123e78bed172d6abae849e8443f60f6017
+    source_ref: git:032131123e78bed172d6abae849e8443f60f6017
+    short_sha: "0321311"
+    changed_paths:
+      - .taskledger.toml
+      - README.md
+      - docs/cli.rst
+      - docs/storage.rst
+      - planledger/cli.py
+      - planledger/storage.py
+      - tests/test_info.py
+      - tests/test_json_contract.py
+    stats:
+      files_changed: 0
+      insertions: 1002
+      deletions: 1
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/cli.rst
+      - docs/storage.rst
+      - planledger/cli.py
+      - planledger/storage.py
+      - tests/test_info.py
+      - tests/test_json_contract.py
+    observed_behavior:
+      CLI exposes show and info commands plus JSON output for inspecting
+      workspace, plan, and storage details.
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: add show command"
+    target_entry_key: cli-inspection-commands-for-workspaces-and-plans
+  - sha: 5003a3860f2035acf966f102e73b0ccf9483226b
+    source_ref: git:5003a3860f2035acf966f102e73b0ccf9483226b
+    short_sha: 5003a38
+    changed_paths:
+      - .taskledger.toml
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - planledger/cli.py
+      - planledger/guardrails.py
+      - planledger/storage.py
+      - skills/planledger/SKILL.md
+      - tests/test_next_action.py
+      - tests/test_plan_guardrails.py
+      - tests/test_plan_status.py
+      - tests/test_prompt_profiles.py
+      - tests/test_skill_files.py
+    stats:
+      files_changed: 0
+      insertions: 814
+      deletions: 52
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - planledger/cli.py
+      - planledger/guardrails.py
+      - planledger/storage.py
+      - skills/planledger/SKILL.md
+      - tests/test_next_action.py
+      - tests/test_plan_status.py
+    observed_behavior:
+      Agent workflow guidance now recommends clearer next actions,
+      status transitions, and guardrails for active plans and workshops.
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: improve workflow"
+    target_entry_key: agent-workflow-next-action-recommendations

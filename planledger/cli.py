@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -402,7 +402,6 @@ def status(
     _run_command(ctx, "status", run)
 
 
-
 def _format_bytes(num_bytes: int) -> str:
     size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB"):
@@ -421,7 +420,9 @@ def _record_matches(
     return sel in {entry_id.lower(), global_ref.lower(), file_ref.lower()}
 
 
-def _inventory_header(result: dict[str, Any], title: str = "Planledger info") -> list[str]:
+def _inventory_header(
+    result: dict[str, Any], title: str = "Planledger info"
+) -> list[str]:
     ws = result["workspace"]
     lines = [title, f"Workspace: {ws['root']}", f"Config: {ws['config_path']}"]
     lines.append(f"Planledger dir: {ws['planledger_dir']}")
@@ -477,7 +478,9 @@ def _human_record_focused(
     filled = int(entry.get("filled_components", 0))
     total = int(entry.get("total_components", len(components)))
     if no_components:
-        lines.append(f"components: {filled}/{total} filled (use without --no-components for detail)")
+        lines.append(
+            f"components: {filled}/{total} filled (use without --no-components for detail)"
+        )
     else:
         lines.append(f"components ({filled}/{total} filled):")
         for key, is_filled in components.items():
@@ -518,7 +521,8 @@ def _human_inventory_full(result: dict[str, Any], *, no_components: bool) -> str
     active_workshop = storage.get("active_workshop_id")
     if active_workshop:
         match = next(
-            (w for w in result["workshops"] if w["workshop_id"] == active_workshop), None
+            (w for w in result["workshops"] if w["workshop_id"] == active_workshop),
+            None,
         )
         if match:
             lines.append(
@@ -744,6 +748,7 @@ def info(
         return result, message
 
     _run_command(ctx, "info", run)
+
 
 @app.command("doctor")
 def doctor_command(ctx: typer.Context) -> None:

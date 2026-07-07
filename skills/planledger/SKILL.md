@@ -113,7 +113,6 @@ Plan-direct skeleton (when the request is already implementation-oriented):
 planledger plan create --title "Short title" --request "Original request"
 ```
 
-
 ## Planning protocol
 
 1. Create the plan:
@@ -145,8 +144,6 @@ planledger plan create --title "Short title" --request "Original request"
 9. Export the rendered plan to the workspace root:
    - `planledger plan export`
    - Include the exported workspace path in the final response.
-
-
 
 ## next-action checkpoint protocol
 
