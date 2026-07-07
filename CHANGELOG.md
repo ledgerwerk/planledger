@@ -7,13 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ## [v0.2.0] - 2026-07-07
+
 ### Added
+
 - Added LedgerCore-backed plan identity and bundle metadata
 - Added prompt-profile interview flow for next-action guidance
 - Added first-class planning workshop workflow
 - Added CLI inspection commands for workspaces and plans
 
 ### Changed
+
 - Documented batch agent workflow guidance
 - Improved agent workflow next-action recommendations
 
