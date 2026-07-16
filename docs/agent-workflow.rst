@@ -11,8 +11,11 @@ Step 1: Check status and initialize
 
    planledger --json status
    planledger init
+   # Use this only when ../ledger is absent and its creation is intentional
+   planledger init --create-sibling-store
 
-This creates a configured Planledger storage directory and a config file at the project root. The config file may be ``planledger.toml`` or ``.planledger.toml``; the storage directory may be outside the source repository when ``storage.planledger_dir`` points there.
+This creates or validates the canonical ``.ledger`` project metadata and resolves
+Planledger data through ``sibling-ledger`` at ``../ledger/plan/planledger``.
 
 Step 2: Route to workshop or plan
 ---------------------------------
@@ -141,7 +144,7 @@ not interview the user.
 
 .. code-block:: toml
 
-   # planledger.toml or .planledger.toml
+   # .ledger/plan/config.toml
    [prompt_profiles.planning_workshop]
    enabled = true
    activation = "always"   # or "triggered"
@@ -156,3 +159,11 @@ not interview the user.
 Required questions are recorded as ``- [ ] REQUIRED:`` lines and resolved as
 ``- [x] REQUIRED:`` lines in ``open_questions``. ``planning_workshop`` is the
 canonical feature name; ``shape this feature`` is only a trigger phrase.
+
+Storage and migration
+---------------------
+The shared machine-local provider is ``.ledger/ledger.local.toml`` and must select
+``sibling-ledger``. Do not set ``LEDGER_WORKSPACE_ROOT`` or run Git from Planledger.
+For legacy layouts, run ``planledger migrate`` first. Apply only after reviewing
+the read-only report with ``planledger migrate apply``. The source is preserved by
+default and Taskledger data at ``../ledger/task/taskledger`` is never modified.

@@ -16,12 +16,16 @@ from planledger.bundle import (
     load_bundle,
 )
 from planledger.errors import PlanledgerError
+from planledger.migration import (
+    apply_migration,
+    inspect_migration,
+    inspection_to_dict,
+    result_to_dict,
+)
 from planledger.models import AppContext, PlanStatus, Workspace
 from planledger.prompt_profiles import load_prompt_profile
 from planledger.render import build_plan, build_workshop
 from planledger.storage import (
-    DEFAULT_PLANLEDGER_DIR,
-    PLANLEDGER_CONFIG_FILENAMES,
     activate_plan,
     activate_workshop,
     append_component,
@@ -79,7 +83,85 @@ workshop_component_app = typer.Typer(help="Workshop component commands")
 app.add_typer(plan_app, name="plan")
 plan_app.add_typer(component_app, name="component")
 app.add_typer(workshop_app, name="workshop")
+migrate_app = typer.Typer(help="Inspect and apply canonical Planledger migrations")
+app.add_typer(migrate_app, name="migrate")
 workshop_app.add_typer(workshop_component_app, name="component")
+
+
+def _migration_message(payload: dict[str, Any]) -> str:
+    source = payload.get("source", {})
+    target = payload.get("target", {})
+    issues = payload.get("issues", [])
+    lines = [
+        "PLANLEDGER MIGRATION",
+        f"Source: {source.get('kind')} {source.get('path') or '(none)'}",
+        f"Target: {target.get('data_root')}",
+        f"Plans: {payload.get('plan_count', 0)}  Workshops: {payload.get('workshop_count', 0)}",
+        "Safety: source preserved by default; Taskledger data is not modified.",
+    ]
+    if issues:
+        lines.append("Issues:")
+        lines.extend(
+            f"  [{item.get('severity')}] {item.get('code')}: {item.get('message')}"
+            for item in issues
+        )
+    else:
+        lines.append("Apply: planledger migrate apply")
+    return "\n".join(lines)
+
+
+@migrate_app.callback(invoke_without_command=True)
+def migrate_callback(
+    ctx: typer.Context,
+    source: Path | None = typer.Option(
+        None, "--source", help="Legacy source data root"
+    ),
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+
+    def run() -> tuple[dict[str, Any], str]:
+        inspection = inspect_migration(
+            workspace_root_from_context(_context(ctx)), source=source
+        )
+        payload = inspection_to_dict(inspection)
+        return payload, _migration_message(payload)
+
+    _run_command(ctx, "migrate", run)
+
+
+@migrate_app.command("apply")
+def migrate_apply(
+    ctx: typer.Context,
+    source: Path | None = typer.Option(
+        None, "--source", help="Legacy source data root"
+    ),
+    backup_dir: Path | None = typer.Option(
+        None, "--backup-dir", help="Backup destination"
+    ),
+    create_sibling_store: bool = typer.Option(
+        False, "--create-sibling-store", help="Create the canonical sibling store"
+    ),
+    retire_source: bool = typer.Option(
+        False, "--retire-source", help="Retire the source after verification"
+    ),
+) -> None:
+    def run() -> tuple[dict[str, Any], str]:
+        root = workspace_root_from_context(_context(ctx))
+        inspection = inspect_migration(root, source=source)
+        result = apply_migration(
+            inspection,
+            backup_dir=backup_dir,
+            create_sibling_store=create_sibling_store,
+            retire_source=retire_source,
+        )
+        payload = result_to_dict(result)
+        return (
+            payload,
+            f"Migration applied\nTarget: {result.receipt_path.parent.parent}\nReceipt: {result.receipt_path}\nBackup: {result.backup_dir}",
+        )
+
+    _run_command(ctx, "migrate.apply", run)
 
 
 def _version_callback(value: bool) -> None:
@@ -201,38 +283,36 @@ def _human_plan_details(plan: dict[str, Any]) -> str:
 def init(
     ctx: typer.Context,
     project_name: str | None = typer.Option(
-        None,
-        "--project-name",
-        help="Project name",
+        None, "--project-name", help="Project name"
     ),
-    planledger_dir: str = typer.Option(
-        DEFAULT_PLANLEDGER_DIR,
-        "--planledger-dir",
-        help="Planledger storage directory",
-    ),
-    hidden_config: bool = typer.Option(
+    create_sibling_store: bool = typer.Option(
         False,
-        "--hidden-config",
-        help="Write .planledger.toml instead of planledger.toml",
+        "--create-sibling-store",
+        help="Create the canonical sibling Ledger store if absent",
     ),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         app_ctx = _context(ctx)
         root = workspace_root_from_context(app_ctx)
+        store_existed = (root.parent / "ledger" / ".ledger-store").is_file()
         workspace = initialize_project(
             root=root,
             project_name=project_name or root.name,
-            planledger_dir=planledger_dir,
-            config_filename=".planledger.toml" if hidden_config else "planledger.toml",
+            create_sibling_store=create_sibling_store,
         )
         result = {
-            "root": str(workspace.root),
-            "config_path": str(workspace.config_path),
-            "planledger_dir": str(workspace.planledger_dir),
-            "storage_path": str(workspace.storage_path),
-            "supported_config_filenames": list(PLANLEDGER_CONFIG_FILENAMES),
+            "kind": "planledger_init",
+            "schema_version": 1,
+            "workspace_provider": workspace.workspace_provider,
+            "store_root": str(workspace.store_root),
+            "authoritative_path": str(workspace.planledger_dir),
+            "binding": "valid",
+            "created_store": create_sibling_store and not store_existed,
         }
-        return result, f"Initialized planledger in {workspace.root}"
+        return result, (
+            f"Initialized planledger\nProvider: {workspace.workspace_provider}\n"
+            f"Store: {workspace.store_root}\nAuthoritative data: {workspace.planledger_dir}"
+        )
 
     _run_command(ctx, "init", run)
 
@@ -293,10 +373,8 @@ def status(
             lines.append("Next: planledger doctor")
             return result, "\n".join(lines)
 
-        project_name = data.get("project_name", "")
-        project_uuid = data.get("project_uuid", "")
-        if not project_name:
-            project_name = config.get("name", workspace.root.name)
+        project_name = workspace.project_name or workspace.root.name
+        project_uuid = workspace.project_uuid
 
         active_workshop_id = get_active_workshop_id(workspace)
         active_workshop_info: dict[str, Any] | None = None
@@ -355,6 +433,11 @@ def status(
             "project_name": project_name,
             "project_uuid": project_uuid,
             "planledger_dir": str(workspace.planledger_dir),
+            "workspace_provider": workspace.workspace_provider,
+            "store_root": str(workspace.store_root),
+            "store_marker_path": str(workspace.store_marker_path),
+            "active_mount": workspace.active_mount_name,
+            "binding_path": str(workspace.binding_path),
             "schema_version": data.get("schema_version"),
             "plan_count": plan_count,
             "workshop_count": workshop_count,
@@ -369,6 +452,10 @@ def status(
         lines = ["Planledger status"]
         lines.append(f"Workspace: {workspace.root}")
         lines.append(f"Config: {workspace.config_path}")
+        lines.append(f"Storage provider: {workspace.workspace_provider}")
+        lines.append(f"Sibling store: {workspace.store_root}")
+        lines.append(f"Authoritative data: {workspace.planledger_dir}")
+        lines.append(f"Binding: {workspace.binding_path}")
         if project_name and project_uuid:
             lines.append(f"Project: {project_name} ({project_uuid})")
         elif project_name:
@@ -426,6 +513,7 @@ def _inventory_header(
     ws = result["workspace"]
     lines = [title, f"Workspace: {ws['root']}", f"Config: {ws['config_path']}"]
     lines.append(f"Planledger dir: {ws['planledger_dir']}")
+    lines.append(f"Storage provider: {ws['workspace_provider']}")
     lines.append(f"Storage: {ws['storage_path']}")
     return lines
 
@@ -498,15 +586,14 @@ def _human_inventory_full(result: dict[str, Any], *, no_components: bool) -> str
     elif ws["project_name"]:
         lines.append(f"Project: {ws['project_name']}")
     storage = result["storage"]
+    lines.append(f"Storage provider: {ws['workspace_provider']}")
+    lines.append(f"Authoritative data: {ws['planledger_dir']}")
+    lines.append(f"Binding: {ws['binding_path']}")
     schema = storage.get("schema_version")
     lines.append(f"Schema: {f'v{schema}' if schema is not None else 'unknown'}")
-    counters = []
-    if storage.get("next_plan_id") is not None:
-        counters.append(f"next_plan_id={storage['next_plan_id']}")
-    if storage.get("next_workshop_id") is not None:
-        counters.append(f"next_workshop_id={storage['next_workshop_id']}")
-    if counters:
-        lines.append(f"Counters: {' '.join(counters)}")
+    allocations = result.get("allocations", {})
+    lines.append(f"Next plan ID: {allocations.get('next_plan_id')}")
+    lines.append(f"Next workshop ID: {allocations.get('next_workshop_id')}")
     active_plan = storage.get("active_plan_id")
     if active_plan:
         match = next((p for p in result["plans"] if p["plan_id"] == active_plan), None)

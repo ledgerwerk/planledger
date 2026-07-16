@@ -1,0 +1,26 @@
+schema_version = 2
+
+[project]
+uuid = "28a57c53-0510-4bfd-adff-11f4d50508db"
+name = "planledger"
+
+[storage.workspace]
+default_provider = "user-data"
+namespace = "ledgerwerk"
+
+[storage.cache]
+default_provider = "user-cache"
+namespace = "ledgerwerk"
+
+[ledgers.taskledger.config]
+location = "project"
+path = "task/config.toml"
+
+[ledgers.taskledger.mounts.data]
+storage = "repository"
+path = "task/taskledger"
+
+[ledgers.taskledger.mounts.indexes]
+storage = "cache"
+scope = "checkout"
+path = "task/taskledger-indexes"

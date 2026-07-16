@@ -1,85 +1,106 @@
 Storage layout
 ==============
 
-Planledger stores all data under the configured Planledger storage directory.
-The location is configured in ``planledger.toml`` or ``.planledger.toml`` under
-``[storage].planledger_dir``. Relative storage paths are resolved from the config
-root, so storage can live outside the source repository, for example
-``../planledger-state/planledger``.
-
-New configs include ledger identity:
-
-.. code-block:: toml
-
-   [ledger]
-   code = "pl"
-   name = "planledger"
-
-Configs without this block remain valid and use those defaults. Absolute paths
-and sibling paths containing ``..`` remain supported.
-
-Directory structure
--------------------
+Planledger uses Ledgercore 0.4.0's fixed ``sibling-ledger`` workspace provider.
+The canonical topology is deliberately narrow and has no runtime fallback:
 
 .. code-block:: text
 
-   <configured planledger_dir>/
-     storage.yaml            # Next plan number counter
+   <project-root>/.ledger/ledger.toml
+   <project-root>/.ledger/ledger.local.toml
+   <project-root>/.ledger/plan/config.toml
+   <project-root>/../ledger/.ledger-store
+   <project-root>/../ledger/plan/planledger/
+     .ledger-project.toml
+     storage.yaml
+     allocations/plans/
+     allocations/workshops/
      plans/
-       plan-0001/
-         plan.yaml           # Plan metadata (title, status, version)
-         components/         # One Markdown file per component
-         rendered/           # Built Markdown artifacts
-         versions/           # Versioned snapshots of component state
+     workshops/
 
-plan.yaml
----------
+The shared manifest contains a project-scoped workspace mount:
 
-Each plan directory contains a ``plan.yaml`` with:
+.. code-block:: toml
 
-- ``id``: plan identifier (e.g. ``plan-0001``).
-- ``kind``: normalized resource kind, always ``plan``.
-- ``title``: human-readable title.
-- ``status``: current lifecycle status.
-- ``version``: integer version counter, incremented on each component change.
+   [ledgers.planledger.config]
+   location = "project"
+   path = "plan/config.toml"
 
-``global_ref`` and ``file_ref`` are derived for JSON and rendered Markdown.
-They are not stored in ``plan.yaml`` or ``storage.yaml``.
+   [ledgers.planledger.mounts.data]
+   storage = "workspace"
+   scope = "project"
+   path = "plan/planledger"
 
-storage.yaml
-------------
+The machine-local shared provider selection is:
 
-Tracks the next available plan number. Modified atomically when a new plan is
-created.
+.. code-block:: toml
+
+   schema_version = 1
+
+   [storage.workspace]
+   provider = "sibling-ledger"
+
+The sibling root must exist, be a directory, and contain a regular
+``.ledger-store`` marker. Plain ``planledger init`` validates an existing store.
+Use ``planledger init --create-sibling-store`` to explicitly create an absent
+store. Planledger never runs Git commands.
+
+Project binding
+---------------
+
+The direct data mount contains ``.ledger-project.toml``. Its UUID must match the
+project UUID in ``.ledger/ledger.toml``. Non-empty unbound data and a binding for
+a different project are fatal errors.
+
+State and allocation
+--------------------
+
+``storage.yaml`` uses schema 4:
+
+.. code-block:: yaml
+
+   schema_version: 4
+   active_plan_id: null
+   active_workshop_id: null
+   created_at: "..."
+   updated_at: "..."
+
+Project identity and next-ID counters are not stored in this file. Plan and
+workshop IDs are derived from strict inventories of record directories and
+allocation tombstones. New record directories are reserved with exclusive
+creation, so a check-then-create race cannot allocate the same ID locally.
+Legacy high-water marks are preserved as tombstones during migration.
 
 Workspace discovery
 -------------------
 
-``planledger.storage.discover_workspace`` walks upward from the current
-directory to find ``planledger.toml`` or ``.planledger.toml``. This identifies
-the project root and the configured Planledger storage directory.
+Normal runtime discovery locates ``.ledger/ledger.toml``, validates the exact
+Planledger registration, loads ``.ledger/ledger.local.toml`` and resolves the
+mount through Ledgercore. It rejects legacy locators, ``root`` overrides,
+non-``sibling-ledger`` providers, ``LEDGER_WORKSPACE_ROOT``, missing markers,
+foreign bindings, and missing data. It does not use platform user-data fallback.
+
+Migration
+---------
+
+``planledger migrate`` is read-only. It classifies repository-local, legacy
+external, namespaced workspace, direct sibling, old canonical, partial, and
+invalid sources. The destination is always ``../ledger/plan/planledger``.
+
+``planledger migrate apply`` performs a fresh inspection, mandatory backup,
+same-store staging, conflict-safe copying, schema/config transformation,
+binding creation, verification, and a migration receipt. Differing files,
+symlinks, malformed records, unknown entries, and UUID conflicts block the
+operation. Sources are preserved by default; ``--retire-source`` only renames
+a source after verification and never deletes it. Taskledger data is never
+migrated or modified.
 
 Read-only inventory
 -------------------
 
-``planledger info`` renders a read-only inventory of everything stored under
-the configured Planledger directory. It is backed by
-``planledger.storage.collect_inventory(workspace)``, which reports workspace
-and storage paths, the ``storage.yaml`` counters, plan and workshop status
-counts, and a per-plan/per-workshop entry list (status, version, component
-fill-state, rendered artifact path, versions, and disk size) plus a total disk
-footprint.
-
-Component fill-state is computed from the component files: a component counts
-as filled when its file is non-empty (``st_size > 0``). Reported sizes are
-scoped to component files, rendered artifacts, and the plan/workshop manifest;
-version snapshots under ``versions/`` are intentionally excluded so the
-footprint stays stable as history grows. ``collect_inventory`` never writes or
-migrates storage.
-
-Version snapshots
------------------
-
-Each time a component is set or appended, the previous component content is
-saved as a versioned snapshot under ``versions/``. This enables ``plan diff``
-and history inspection.
+``planledger info`` reports the provider, store marker, direct authoritative
+path, binding, schema, derived next IDs, record status, rendered artifacts, and
+disk footprint. ``doctor`` checks the same invariants without changing files.
+Repository mounts for Archledger and Releaseledger remain below
+``<project-root>/.ledger``; selecting the workspace provider does not redirect
+them.

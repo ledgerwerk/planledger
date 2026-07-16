@@ -5,7 +5,8 @@ Prerequisites
 -------------
 
 - Python 3.10 or later.
-- Ledgercore 0.1.x (installed automatically as a runtime dependency).
+- Ledgercore 0.4.0 or later (installed automatically as a runtime dependency).
+- ``tomlkit`` 0.12 or later (installed automatically for shared Ledger config mutation).
 
 Editable install
 ----------------

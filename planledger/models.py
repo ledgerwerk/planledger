@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from planledger.project_context import Workspace as Workspace
+
 PlanStatus = Literal["new", "in_progress", "rework", "cancelled", "done"]
 WorkshopStatus = Literal["new", "exploring", "shaped", "planned", "cancelled"]
 
@@ -15,19 +17,7 @@ class AppContext:
     json_output: bool
 
 
-@dataclass
-class Workspace:
-    root: Path
-    config_path: Path
-    planledger_dir: Path
-    storage_path: Path
-    config: dict[str, Any]
-
-    @property
-    def ledger_code(self) -> str:
-        from planledger.identity import ledger_code_from_config
-
-        return ledger_code_from_config(self.config)
+__all__ = ["AppContext", "Workspace", "ComponentSpec", "Plan", "Workshop"]
 
 
 @dataclass

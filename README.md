@@ -17,7 +17,7 @@ Planledger stores independent, structured, versioned implementation plans and re
 
 ## What it does
 
-- stores independent plans under the configured Planledger storage directory, for example `.planledger/plans/plan-0001/` or `../planledger-state/planledger/plans/plan-0001/`;
+- stores independent plans under `../ledger/plan/planledger/plans/plan-0001/` through Ledgercore's `sibling-ledger` provider;
 - versions every meaningful plan change;
 - keeps each plan as modular component files;
 - renders a standalone Markdown artifact for human or coding-agent handoff;
@@ -206,39 +206,57 @@ Explain the design and why it is acceptable.
 
 ## Filesystem layout
 
+Planledger uses Ledgercore's project-scoped `sibling-ledger` workspace provider.
+Committed project metadata stays in `.ledger`; authoritative Planledger data is
+stored at the fixed sibling path:
+
 ```text
-<configured planledger_dir>/
+<project-root>/.ledger/ledger.toml
+<project-root>/.ledger/ledger.local.toml  # machine-local, normally ignored
+<project-root>/.ledger/plan/config.toml
+<project-root>/../ledger/.ledger-store
+<project-root>/../ledger/plan/planledger/
+  .ledger-project.toml
   storage.yaml
+  allocations/plans/
+  allocations/workshops/
   plans/
-    plan-0001/
-      plan.yaml
-      components/
-      rendered/
-      versions/
+  workshops/
 ```
 
-The config file may be `planledger.toml` or `.planledger.toml`. `storage.planledger_dir` is resolved relative to the config root when it is a relative path, so sibling storage such as `../planledger-state/planledger` is valid.
+The shared manifest contains one Planledger `data` mount:
 
 ```toml
-[ledger]
-code = "pl"
-name = "planledger"
+[ledgers.planledger.config]
+location = "project"
+path = "plan/config.toml"
 
-[project]
-name = "my-project"
-uuid = "..."
-
-[storage]
-planledger_dir = "../planledger-state/planledger"
+[ledgers.planledger.mounts.data]
+storage = "workspace"
+scope = "project"
+path = "plan/planledger"
 ```
 
-Configs without `[ledger]` remain valid and default to code `pl` and name
-`planledger`.
+The machine-local provider selection is stored in `.ledger/ledger.local.toml`:
+
+```toml
+schema_version = 1
+
+[storage.workspace]
+provider = "sibling-ledger"
+```
+
+Planledger rejects arbitrary external roots, repository-local normal storage,
+UUID-namespaced Planledger paths, `root` workspace overrides, and
+`LEDGER_WORKSPACE_ROOT`. Use `planledger migrate` to inspect legacy layouts and
+`planledger migrate apply` to move them safely.
 
 ## CLI surface
 
 ```text
-planledger init [--project-name NAME] [--planledger-dir .planledger] [--hidden-config]
+planledger init [--project-name NAME] [--create-sibling-store]
+planledger migrate [--source PATH]
+planledger migrate apply [--source PATH] [--backup-dir PATH] [--create-sibling-store] [--retire-source]
 planledger status [--check] [--json]
 planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
 planledger doctor [--json]
@@ -262,11 +280,11 @@ planledger plan diff [PLAN_ID] [--plan PLAN_ID] --from v0001 --to v0002
 planledger plan apply --file PATH_OR_DASH [--dry-run]
 ```
 
-`planledger info` is a read-only inventory of everything stored: workspace and
-storage paths, schema version and id counters, the active plan/workshop, and
-every plan and workshop with status, version, component fill-state, rendered
-artifact path, and disk footprint. Use `status` for a quick health/counts
-snapshot plus the active plan; use `info` for the full stored inventory.
+`planledger info` is a read-only inventory of the canonical sibling workspace.
+It reports the provider, direct authoritative path, binding, schema-4 state,
+derived next IDs, the active plan/workshop, record status, rendered artifacts,
+and disk footprint. It never displays persisted allocation counters. Use
+`status` for a quick health/counts snapshot and `doctor` for read-only health.
 
 ```bash
 planledger info                       # full human inventory
@@ -311,9 +329,8 @@ JSON
 ## Plan export
 
 `planledger plan export` writes the rendered Markdown to a workspace-root-relative
-path (default `WORKSPACE_ROOT/PLAN_ID.md`). This is the recommended final handoff
-step because the configured Planledger storage directory may be outside the source
-workspace.
+path (default `WORKSPACE_ROOT/PLAN_ID.md`). The canonical storage path is the
+sibling Ledger path, while exports remain explicit workspace artifacts.
 
 ```bash
 planledger plan export --plan plan-0004
@@ -326,7 +343,7 @@ Planledger ships an optional prompt profile named `planning_workshop`. When enab
 
 This is a prompt profile obeyed by the skill, not a separate skill and not a CLI command that interviews you. The CLI only parses, persists, and exposes the policy.
 
-Enable it in `planledger.toml` or `.planledger.toml`:
+Enable it in `.ledger/plan/config.toml`:
 
 ```toml
 [prompt_profiles.planning_workshop]

@@ -21,3 +21,7 @@ cp -R ./skills/planledger ~/.agents/skills/planledger
 - reporting plan id, version, status, rendered storage path, workspace export path, and validation result.
 - using local `plan-000X` ids for CLI work and `pl:plan-000X` when a plan
   needs a global cross-ledger reference.
+
+## Canonical storage
+
+Planledger uses Ledgercore's `sibling-ledger` provider. Authoritative data is always `<project-root>/../ledger/plan/planledger`, with the shared provider selection in `.ledger/ledger.local.toml`, stable config in `.ledger/plan/config.toml`, and a `.ledger-project.toml` binding. Legacy repository-local, arbitrary external, and namespaced layouts are migration inputs only.

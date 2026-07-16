@@ -9,18 +9,18 @@ Project setup
 
 .. code-block:: text
 
-   planledger init [--project-name NAME] [--planledger-dir .planledger] [--hidden-config]
+   planledger init [--project-name NAME] [--create-sibling-store]
+   planledger migrate [--source PATH]
+   planledger migrate apply [--source PATH] [--backup-dir PATH] [--create-sibling-store] [--retire-source]
    planledger status [--json]
    planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
    planledger doctor [--json]
 
-``planledger info`` prints a read-only inventory of everything planledger has
-stored: workspace and storage paths, schema version and id counters, the active
-plan/workshop, and every plan and workshop with status, version, component
-fill-state (whether each component file is non-empty), rendered artifact path,
-versions, and disk size. It reports resolved absolute paths from the
-``Workspace`` object and never writes or migrates storage, so it is safe to run
-against external storage.
+``planledger info`` prints a read-only inventory of the canonical sibling
+workspace: provider, direct data path, binding, schema-4 state, derived IDs,
+the active plan/workshop, records, rendered artifacts, and disk size. It never
+writes or migrates storage. ``planledger status`` is the quick health/counts
+view, and ``planledger doctor`` checks the same invariants read-only.
 
 Use ``planledger status`` for a quick health/counts snapshot plus the active
 plan; use ``planledger info`` for the full stored inventory and per-component
@@ -108,9 +108,8 @@ Export
 ------
 
 ``planledger plan export`` writes the rendered Markdown to a workspace-root-relative
-path (default ``WORKSPACE_ROOT/PLAN_ID.md``). This is the recommended final handoff
-step because the configured Planledger storage directory may be outside the source
-workspace.
+path (default ``WORKSPACE_ROOT/PLAN_ID.md``). The canonical storage path remains
+``../ledger/plan/planledger``; exports are explicit workspace artifacts.
 
 .. code-block:: bash
 
@@ -129,7 +128,7 @@ possible, records required questions in ``open_questions``, and stops after
 each question. The CLI only parses, persists, and exposes the policy; it does
 not interview the user itself.
 
-Configure it in ``planledger.toml`` or ``.planledger.toml``:
+Configure the prompt profile in the stable project config ``.ledger/plan/config.toml``:
 
 .. code-block:: toml
 
@@ -162,3 +161,10 @@ The phrase ``shape this feature`` is supported only as a trigger phrase for
 ``activation = "triggered"``; ``planning_workshop`` is the canonical feature
 name. The profile does not create planning-workshop records, does not replace
 ``open_questions``, and does not change Planledger's workshop-first, plan-second scope.
+
+Storage contract
+----------------
+Planledger data is always resolved through ``sibling-ledger`` at
+``../ledger/plan/planledger``. The sibling root must contain a regular
+``.ledger-store`` marker and the data root must contain a matching binding.
+Legacy paths are handled only by the migration commands.

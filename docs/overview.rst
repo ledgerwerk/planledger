@@ -19,7 +19,7 @@ Product contract
 What it does
 ------------
 
-- Stores independent plans under the configured Planledger storage directory.
+- Stores independent plans under the canonical sibling mount ``../ledger/plan/planledger`` through ``sibling-ledger``.
 - Versions every meaningful plan change.
 - Keeps each plan as modular component files.
 - Renders a standalone Markdown artifact for human or coding-agent handoff.
@@ -36,3 +36,8 @@ global ref ``pl:plan-0001`` and file ref ``pl-plan-0001`` from the configured
 ledger code. Global refs follow ``<ledger>:<kind>-<number>``. Uppercase file
 aliases are accepted as input compatibility, but canonical output is lowercase.
 These refs are identifiers only and do not add task-manager integration.
+
+Storage is selected in the shared machine-local ``.ledger/ledger.local.toml`` and
+project metadata is committed in ``.ledger/ledger.toml``. Legacy layouts are handled
+only by ``planledger migrate``; Planledger does not use arbitrary external roots or
+execute Git commands.

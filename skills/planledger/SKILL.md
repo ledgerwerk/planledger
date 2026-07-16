@@ -33,10 +33,14 @@ Do not use Planledger for implementation tracking, task management, release note
 - Do not set a plan to `done` until required components are complete, `plan build` succeeds, and `plan validate` passes.
 - Do not claim implementation tests passed unless you actually ran them.
 - Do not omit the plan id, version, status, rendered Markdown path, workspace export path, or validation result in the final response.
-- Do not infer that Planledger is uninitialized just because `.planledger/` is absent; `.planledger.toml` and external `storage.planledger_dir` paths are valid.
+- Treat `.ledger/ledger.toml` as the only normal project locator. Legacy `planledger.toml`, `.planledger.toml`, repository-local data, arbitrary external roots, and namespaced workspace data are migration inputs only.
 - Do not skip `plan export` after marking a plan done when the rendered Markdown must be read by the coding harness.
 - Do not create temporary files for multiline component content when `--stdin` or `--file -` is available.
 - Do not store or recommend a `global_id`; Planledger derives global references.
+
+## Canonical storage contract
+
+Planledger authoritative data is resolved through Ledgercore's `sibling-ledger` provider at `<project-root>/../ledger/plan/planledger`. The shared provider selection is `.ledger/ledger.local.toml`; stable Planledger config is `.ledger/plan/config.toml`. Require the sibling `.ledger-store` marker and the direct mount `.ledger-project.toml` binding. Never set `LEDGER_WORKSPACE_ROOT`, pass a workspace root override, invoke Git, or describe repository-local, arbitrary external, dual-mount, or UUID-namespaced storage as current behavior. Use `planledger migrate` for legacy layouts.
 
 ## Core agent command path
 
@@ -61,7 +65,7 @@ plan apply
 ## Fresh context entry protocol
 
 1. Run `planledger --json status`. Treat `result.config_path`, `result.planledger_dir`, and `result.storage_path` as authoritative when present.
-2. If no config is found, run `planledger init`. If config exists but storage is missing, run `planledger doctor` and report the configured missing path; do not claim the config filename is invalid merely because it is `.planledger.toml`.
+2. If no canonical project is found, run `planledger init` and provision the sibling store explicitly when appropriate. If a legacy locator or layout is found, run `planledger migrate` and review the report before applying it. The direct data path is always `../ledger/plan/planledger`.
 3. Run `planledger --json next-action [--plan PLAN_ID]` to get the recommended next step for the active plan. Use this root `--json` form; the flag may also be placed after the subcommand.
 4. Run `planledger --json plan list` when you need a workspace-wide plan overview.
 5. If the user named a plan id, inspect it with `planledger --json plan show --plan PLAN_ID`.

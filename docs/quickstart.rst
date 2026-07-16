@@ -9,8 +9,10 @@ deliverable.
    # Check workspace state
    planledger --json status
 
-   # Initialize the project (run once)
+   # Initialize after provisioning ../ledger/.ledger-store
    planledger init
+   # Or explicitly create the sibling store
+   planledger init --create-sibling-store
 
    # Create a new independent plan
    planledger plan create --title "Add feature A" \
@@ -31,10 +33,8 @@ deliverable.
    # Mark the plan done
    planledger plan status plan-0001 done --reason "Ready for coding agent handoff."
 
-After ``done``, the rendered Markdown artifact lives under the configured
-Planledger storage directory, for example
-``.planledger/plans/plan-0001/rendered/`` or
-``../planledger-state/planledger/plans/plan-0001/rendered/``.
+After ``done``, the rendered Markdown artifact lives under the canonical sibling
+store at ``../ledger/plan/planledger/plans/plan-0001/rendered/``.
 
 Export the rendered plan to the workspace root so the coding harness can read it:
 
@@ -46,3 +46,6 @@ Export the rendered plan to the workspace root so the coding harness can read it
 New planning request equals new independent plan unless the user names an existing
 ``plan-000X``. The ``done`` status means the handoff artifact is structurally ready,
 not that implementation has been completed.
+
+Legacy layouts are migration inputs only. Inspect them with ``planledger migrate``;
+apply a reviewed migration with ``planledger migrate apply``.
