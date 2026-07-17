@@ -7,6 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from planledger.cli import app
+from planledger.project_context import load_workspace
 
 
 @pytest.fixture
@@ -35,12 +36,31 @@ def invoke_json(invoke):
 
 @pytest.fixture
 def initialized_workspace(tmp_path: Path, invoke):
+    project = tmp_path / "project"
+    project.mkdir()
+    external = tmp_path / "ledger"
+    external.mkdir()
     result = invoke(
-        tmp_path,
+        project,
         "init",
         "--project-name",
         "Test Project",
-        "--create-sibling-store",
+        "--create-external-store",
     )
     assert result.exit_code == 0, result.stdout
-    return tmp_path
+    workspace = load_workspace(project)
+    legacy = project / ".planledger"
+    if not legacy.exists():
+        try:
+            legacy.symlink_to(workspace.data_root)
+        except (OSError, NotImplementedError):
+            pass
+    return project
+
+
+@pytest.fixture
+def data_dir(initialized_workspace: Path) -> Path:
+    """Return the resolved Planledger data root for the initialized project."""
+    workspace = load_workspace(initialized_workspace)
+    return workspace.data_root
+

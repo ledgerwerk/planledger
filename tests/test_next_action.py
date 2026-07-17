@@ -238,7 +238,7 @@ def test_next_action_is_read_only(initialized_workspace: Path, invoke) -> None:
 def _enable_planning_interview(
     workspace: Path, *, activation: str = "always", phrases: list[str] | None = None
 ) -> None:
-    config = workspace / "planledger.toml"
+    config = workspace / ".ledger" / "planledger" / "config.toml"
     block = "\n[prompt_profiles.planning_interview]\nenabled = true\n"
     block += f'activation = "{activation}"\n'
     if phrases is not None:
@@ -385,7 +385,7 @@ def _enable_planning_workshop_with_topics(
     min_resolved: int = 0,
     max_required: int = 20,
 ) -> None:
-    config = workspace / "planledger.toml"
+    config = workspace / ".ledger" / "planledger" / "config.toml"
     block = (
         "\n[prompt_profiles.planning_workshop]\n"
         "enabled = true\n"

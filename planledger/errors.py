@@ -9,6 +9,7 @@ class PlanledgerError(Exception):
     message: str
     remediation: list[str] = field(default_factory=list)
     exit_code: int = 1
+    details: dict[str, object] = field(default_factory=dict)
 
     @property
     def kind(self) -> str:
@@ -18,6 +19,8 @@ class PlanledgerError(Exception):
         data: dict[str, object] = {
             "code": self.code,
             "message": self.message,
-            "remediation": self.remediation,
+            "remediation": list(self.remediation),
         }
+        if self.details:
+            data["details"] = {str(k): v for k, v in self.details.items()}
         return data

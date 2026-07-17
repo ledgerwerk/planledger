@@ -52,10 +52,6 @@ from planledger.models import (
     WorkshopStatus,
     Workspace,
 )
-from planledger.project_binding import (
-    create_project_binding,
-    directory_is_effectively_empty,
-)
 from planledger.project_context import (
     load_workspace as load_canonical_workspace,
 )
@@ -78,6 +74,16 @@ PLANLEDGER_CONFIG_FILENAMES: tuple[str, str] = ("planledger.toml", ".planledger.
 DEFAULT_PLANLEDGER_CONFIG_FILENAME = "planledger.toml"
 DEFAULT_PLANLEDGER_DIR = ".planledger"
 STORAGE_FILENAME = "storage.yaml"
+
+
+def __getattr__(name: str) -> Any:
+    # Compatibility re-export for one release. The canonical init flow lives
+    # in ``planledger.initialization``.
+    if name == "initialize_project":
+        from planledger.initialization import initialize_project as _initialize_project
+
+        return _initialize_project
+    raise AttributeError(name)
 VALID_STATUSES: set[PlanStatus] = {
     "new",
     "in_progress",
@@ -312,7 +318,10 @@ def discover_workspace(app_ctx: AppContext) -> Workspace | None:
     locator = locate_project(start)
     if locator is None:
         return None
-    return load_canonical_workspace(start)
+    try:
+        return load_canonical_workspace(start, require_initialized=False)
+    except PlanledgerError:
+        return None
 
 
 def load_workspace(app_ctx: AppContext) -> Workspace:
@@ -430,21 +439,12 @@ def _write_toml(path: Path, document: dict[str, Any]) -> None:
 
 def _canonical_manifest(project_uuid: str, project_name: str) -> dict[str, Any]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "project": {"uuid": project_uuid, "name": project_name},
-        "storage": {
-            "workspace": {"default_provider": "user-data", "namespace": "ledgerwerk"},
-            "cache": {"default_provider": "user-cache", "namespace": "ledgerwerk"},
-        },
         "ledgers": {
             "planledger": {
-                "config": {"location": "project", "path": "plan/config.toml"},
                 "mounts": {
-                    "data": {
-                        "storage": "workspace",
-                        "scope": "project",
-                        "path": f"planledger/{project_uuid}",
-                    },
+                    "data": {"storage": "external", "root": "../ledger"},
                 },
             },
         },
@@ -469,60 +469,110 @@ def _canonical_stable_config() -> dict[str, Any]:
     }
 
 
-def _ensure_sibling_store(store_root: Path, *, create: bool) -> bool:
-    created = False
-    if store_root.exists():
-        if store_root.is_symlink() or not store_root.is_dir():
-            raise PlanledgerError(
-                "PLANLEDGER_SIBLING_ROOT_NOT_DIRECTORY",
-                f"Canonical sibling store is not a directory: {store_root}.",
-            )
-    elif create:
-        store_root.mkdir(parents=True)
-        created = True
-    else:
+def _initialize_planledger_external_store(
+    store_root: Path,
+    *,
+    create: bool,
+    legacy_compatible: bool = True,
+) -> bool:
+    """Create or refresh the Ledgercore external store marker."""
+    from planledger.ledgercore_backend import (
+        initialize_planledger_external_store,
+        validate_planledger_external_store,
+    )
+
+    if store_root.exists() and (store_root.is_symlink() or not store_root.is_dir()):
         raise PlanledgerError(
-            "PLANLEDGER_SIBLING_ROOT_MISSING",
-            "The canonical sibling Ledger store does not exist or is not marked.",
-            remediation=["Run: planledger init --create-sibling-store"],
+            "PLANLEDGER_EXTERNAL_STORE_INVALID",
+            f"Canonical external store is not a directory: {store_root}.",
         )
-    marker = store_root / ".ledger-store"
-    if marker.exists() or marker.is_symlink():
-        if marker.is_symlink() or not marker.is_file():
-            raise PlanledgerError(
-                "PLANLEDGER_SIBLING_MARKER_INVALID",
-                f"Sibling store marker must be a regular file: {marker}.",
-            )
-    else:
-        entries = list(store_root.iterdir())
-        if entries and not created:
-            raise PlanledgerError(
-                "PLANLEDGER_SIBLING_ROOT_NOT_EMPTY",
-                f"Cannot mark non-empty sibling directory: {store_root}.",
-            )
+    if store_root.exists() and not any(store_root.iterdir()):
+        initialize_planledger_external_store(
+            store_root, legacy_compatible=legacy_compatible
+        )
+        return True
+    if not store_root.exists():
         if not create:
             raise PlanledgerError(
-                "PLANLEDGER_SIBLING_ROOT_UNMARKED",
-                f"Sibling store marker is missing: {marker}.",
+                "PLANLEDGER_EXTERNAL_STORE_MISSING",
+                "Canonical external store does not exist.",
+                remediation=[
+                    "Run: planledger init --data-storage external --create-external-store",
+                ],
             )
-        marker.touch(exist_ok=False)
-        created = True
-    return created
+        store_root.mkdir(parents=True)
+        initialize_planledger_external_store(
+            store_root, legacy_compatible=legacy_compatible
+        )
+        return True
+    try:
+        validate_planledger_external_store(store_root, allow_legacy=True)
+        return False
+    except PlanledgerError:
+        if not create:
+            raise
+        initialize_planledger_external_store(
+            store_root, legacy_compatible=legacy_compatible
+        )
+        return True
 
 
 def initialize_project(
     root: Path,
     project_name: str,
     *,
-    create_sibling_store: bool = False,
+    create_external_store: bool | None = None,
+    create_sibling_store: bool | None = None,
+    project_uuid: str | None = None,
+    data_storage: str = "external",
+    external_root: str | None = "../ledger",
 ) -> Workspace:
+    if create_external_store is None:
+        create_external_store = bool(create_sibling_store)
+
+    from planledger.ledgercore_backend import (
+        DATA_MOUNT,
+        derive_planledger_external_mount_path,
+        initialize_planledger_locations,
+        load_planledger_ledger_layout,
+        write_planledger_manifest,
+    )
+    from planledger.ledgercore_backend import (  # noqa: F401 - imported for side-effect contracts
+        ensure_planledger_registration as _ensure_registration,
+    )
+
     resolved_root = root.resolve()
     ledger_dir = resolved_root / ".ledger"
     manifest_path = ledger_dir / "ledger.toml"
     local_path = ledger_dir / "ledger.local.toml"
-    stable_path = ledger_dir / "plan" / "config.toml"
-    if manifest_path.exists() or local_path.exists() or stable_path.exists():
+    stable_path = ledger_dir / "planledger" / "config.toml"
+
+    if manifest_path.exists() or stable_path.exists():
         try:
+            existing = load_canonical_workspace(
+                resolved_root, require_initialized=False
+            )
+            data_root = existing.data_root
+            if not (existing.storage_path.is_file()):
+                timestamp = now_iso()
+                _write_yaml(
+                    data_root / STORAGE_FILENAME,
+                    {
+                        "schema_version": 4,
+                        "active_plan_id": None,
+                        "active_workshop_id": None,
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    },
+                )
+                for directory in (
+                    "allocations/plans",
+                    "allocations/workshops",
+                    "migrations",
+                    "plans",
+                    "workshops",
+                ):
+                    (data_root / directory).mkdir(parents=True, exist_ok=True)
             return load_canonical_workspace(resolved_root)
         except PlanledgerError as exc:
             raise PlanledgerError(
@@ -530,6 +580,7 @@ def initialize_project(
                 "Existing canonical Ledger configuration is incomplete or conflicting.",
                 remediation=["Run: planledger doctor", "Run: planledger migrate"],
             ) from exc
+
     for legacy in PLANLEDGER_CONFIG_FILENAMES:
         if (resolved_root / legacy).exists():
             raise PlanledgerError(
@@ -537,28 +588,80 @@ def initialize_project(
                 f"Legacy Planledger configuration found: {resolved_root / legacy}.",
                 remediation=["Run: planledger migrate"],
             )
-    project_uuid = str(uuid4())
-    store_root = resolved_root.parent / "ledger"
-    _ensure_sibling_store(store_root, create=create_sibling_store)
-    data_root = store_root / "planledger" / project_uuid
-    data_root.mkdir(parents=True, exist_ok=True)
-    if not directory_is_effectively_empty(data_root):
+
+    project_uuid = project_uuid or str(uuid4())
+    data_storage_normalized = data_storage
+    if data_storage_normalized not in {"project", "external", "user-data"}:
         raise PlanledgerError(
-            "PLANLEDGER_DATA_ROOT_UNBOUND",
-            f"Non-empty unbound Planledger data exists: {data_root}.",
-            remediation=["Run: planledger migrate"],
+            "PLANLEDGER_STORAGE_TARGET_INVALID",
+            f"Unsupported data storage {data_storage!r}.",
+            details={"allowed": ["project", "external", "user-data"]},
         )
+    external_root_value = (
+        external_root if data_storage_normalized == "external" else None
+    )
+
+    if data_storage_normalized == "external" and external_root_value:
+        candidate = (resolved_root / external_root_value).resolve()
+        external_root_path = candidate
+        _initialize_planledger_external_store(
+            external_root_path,
+            create=bool(create_external_store),
+            legacy_compatible=True,
+        )
+        data_root = derive_planledger_external_mount_path(
+            external_root_value,
+            project_uuid,
+            DATA_MOUNT,
+            project_root=resolved_root,
+        )
+    elif data_storage_normalized == "project":
+        data_root = (
+            resolved_root / ".ledger" / "planledger" / DATA_MOUNT
+        ).resolve()
+    else:
+        from platformdirs import user_data_path
+
+        user_data = Path(user_data_path("ledgerwerk", appauthor=False))
+        data_root = user_data / "planledger" / project_uuid / DATA_MOUNT
+
+    if data_root.exists():
+        if data_root.is_symlink() or not data_root.is_dir():
+            raise PlanledgerError(
+                "PLANLEDGER_DATA_ROOT_INVALID",
+                f"Planledger data path is not a real directory: {data_root}.",
+            )
+        if any(data_root.iterdir()):
+            raise PlanledgerError(
+                "PLANLEDGER_DATA_ROOT_UNBOUND",
+                f"Non-empty unbound Planledger data exists: {data_root}.",
+                remediation=["Run: planledger migrate"],
+            )
+    data_root.mkdir(parents=True, exist_ok=True)
+
     ledger_dir.mkdir(parents=True, exist_ok=True)
-    _write_toml(manifest_path, _canonical_manifest(project_uuid, project_name))
-    _write_toml(
-        local_path,
-        {"schema_version": 1, "storage": {"workspace": {"provider": "sibling-ledger"}}},
+    ledger_dir_planledger = ledger_dir / "planledger"
+    ledger_dir_planledger.mkdir(parents=True, exist_ok=True)
+    stable_path = ledger_dir_planledger / "config.toml"
+    if not stable_path.exists():
+        _write_toml(stable_path, _canonical_stable_config())
+
+    manifest = _ensure_registration(
+        resolved_root,
+        project_uuid=project_uuid,
+        project_name=project_name,
+        data_storage=data_storage_normalized,
+        external_root=external_root_value,
     )
-    stable_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_toml(stable_path, _canonical_stable_config())
-    binding = create_project_binding(
-        data_root, project_uuid=project_uuid, project_name=project_name
+    write_planledger_manifest(resolved_root, manifest, preserve_comments=True)
+
+    layout = load_planledger_ledger_layout(resolved_root, validate_storage=False)
+    initialize_planledger_locations(
+        layout,
+        initialize_config=True,
+        initialize_data=True,
     )
+
     timestamp = now_iso()
     _write_yaml(
         data_root / STORAGE_FILENAME,
@@ -578,12 +681,9 @@ def initialize_project(
         "workshops",
     ):
         (data_root / directory).mkdir(parents=True, exist_ok=True)
-    workspace = load_canonical_workspace(resolved_root)
-    if workspace.binding != binding:
-        raise PlanledgerError(
-            "PLANLEDGER_BINDING_INVALID", "Created binding did not validate."
-        )
-    return workspace
+    if local_path.exists() and not local_path.is_file():
+        local_path.unlink()
+    return load_canonical_workspace(resolved_root)
 
 
 def _toml_dump(data: dict[str, Any]) -> str:
@@ -1233,8 +1333,11 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     if (
-        not workspace.store_marker_path.is_file()
-        or workspace.store_marker_path.is_symlink()
+        workspace.store_marker_path is not None
+        and (
+            not workspace.store_marker_path.is_file()
+            or workspace.store_marker_path.is_symlink()
+        )
     ):
         errors.append(f"Invalid sibling store marker: {workspace.store_marker_path}.")
     if not workspace.storage_path.exists():
@@ -1273,11 +1376,11 @@ def doctor(workspace: Workspace) -> dict[str, Any]:
             "local_config_path": str(workspace.local_config_path),
             "planledger_dir": str(workspace.planledger_dir),
             "storage_path": str(workspace.storage_path),
-            "workspace_provider": workspace.workspace_provider,
-            "store_root": str(workspace.store_root),
-            "store_marker_path": str(workspace.store_marker_path),
+            "data_storage": workspace.data_storage,
+            "storage_source": workspace.storage_source,
+            "external_root": str(workspace.external_root) if workspace.external_root else None,
             "binding_path": str(workspace.binding_path),
-            "active_mount": workspace.active_mount_name,
+            "active_mount": "data",
         },
     }
 
@@ -2411,6 +2514,20 @@ def collect_inventory(workspace: Workspace) -> dict[str, Any]:
 
     total_size = plans_total_size + workshops_total_size
 
+    storage_validation = workspace.storage_validation
+    binding_status = "unknown"
+    if storage_validation is not None:
+        try:
+            results = list(storage_validation.results)
+        except AttributeError:
+            results = []
+        if results and all(result.valid for result in results):
+            binding_status = "valid"
+        elif results:
+            binding_status = "invalid"
+        else:
+            binding_status = "absent"
+
     return {
         "initialized": True,
         "workspace": {
@@ -2424,17 +2541,19 @@ def collect_inventory(workspace: Workspace) -> dict[str, Any]:
             "project_name": project_name,
             "project_uuid": project_uuid,
             "ledger_code": ledger_code,
-            "workspace_provider": workspace.workspace_provider,
-            "store_root": str(workspace.store_root),
-            "store_marker_path": str(workspace.store_marker_path),
-            "active_mount": workspace.active_mount_name,
-            "mount_storage": workspace.mount_storage,
-            "mount_scope": workspace.mount_scope,
-            "mount_source": workspace.mount_source,
-            "binding_path": str(workspace.binding_path),
         },
         "storage": {
+            "mount": "data",
+            "kind": workspace.data_storage,
+            "source": workspace.storage_source,
+            "external_root": str(workspace.external_root) if workspace.external_root else None,
+            "path": str(workspace.data_root),
+            "binding_path": str(workspace.binding_path),
+            "binding_status": binding_status,
+        },
+        "state": {
             "readable": storage_readable,
+            "path": str(workspace.storage_path),
             "schema_version": data.get("schema_version"),
             "created_at": data.get("created_at"),
             "updated_at": data.get("updated_at"),

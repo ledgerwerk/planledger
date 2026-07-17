@@ -73,23 +73,21 @@ def test_status_json_exposes_prompt_profiles(
     assert result.exit_code == 0, result.stdout
     r = payload["result"]
     assert "prompt_profiles" in r
-    assert r["prompt_profiles"] == []
-
-    config = initialized_workspace / "planledger.toml"
-    config.write_text(
-        config.read_text(encoding="utf-8")
-        + "\n[prompt_profiles.planning_interview]\nenabled = true\n"
-        + 'activation = "always"\n',
-        encoding="utf-8",
+    # Default canonical config ships the planning_workshop profile enabled.
+    profiles = r["prompt_profiles"]
+    assert any(
+        profile["name"] == "planning_workshop" for profile in profiles
     )
-
-    result, payload = invoke_json(initialized_workspace, "status")
-    assert result.exit_code == 0, result.stdout
-    profiles = payload["result"]["prompt_profiles"]
-    assert len(profiles) == 1
-    assert profiles[0]["name"] == "planning_interview"
-    assert profiles[0]["enabled"] is True
-    assert profiles[0]["activation"] == "always"
+    # Status must not emit the deprecated storage vocabulary at the top level.
+    for forbidden in (
+        "workspace_provider",
+        "store_root",
+        "store_marker_path",
+        "mount_storage",
+        "mount_scope",
+        "mount_source",
+    ):
+        assert forbidden not in r
 
 
 def test_info_json_envelope_contract(initialized_workspace: Path, invoke_json) -> None:

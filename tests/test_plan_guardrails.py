@@ -327,7 +327,7 @@ def test_min_resolved_required_questions_blocks_done_until_resolved(
 ) -> None:
     from tests.test_plan_status import _fill_required_components
 
-    config = initialized_workspace / "planledger.toml"
+    config = initialized_workspace / ".ledger" / "planledger" / "config.toml"
     config.write_text(
         config.read_text(encoding="utf-8")
         + "\n[prompt_profiles.planning_interview]\n"

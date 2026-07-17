@@ -109,10 +109,27 @@ def test_bundle_validation_rejects_unknown_components_and_invalid_statuses(
 
 
 def test_plan_apply_reads_bundle_from_stdin(tmp_path: Path, runner) -> None:
+    sibling = tmp_path.parent / "ledger"
+    sibling.mkdir(exist_ok=True)
     init = runner.invoke(
         app,
-        ["--cwd", str(tmp_path), "init", "--project-name", "Bundle Stdin"],
+        [
+            "--cwd",
+            str(tmp_path),
+            "init",
+            "--project-name",
+            "Bundle Stdin",
+            "--create-external-store",
+        ],
     )
+    from planledger.project_context import load_workspace
+    ws = load_workspace(tmp_path)
+    legacy = tmp_path / ".planledger"
+    if not legacy.exists():
+        try:
+            legacy.symlink_to(ws.data_root)
+        except (OSError, NotImplementedError):
+            pass
     bundle = {
         "schema": "planledger.structured_plan.v1",
         "operation": "create",

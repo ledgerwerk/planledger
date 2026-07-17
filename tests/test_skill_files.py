@@ -121,12 +121,26 @@ def test_skill_has_taskledger_style_agent_protocol_without_taskledger_scope() ->
         "planledger plan build",
         "planledger plan validate",
         "rendered Markdown",
-        ".planledger.toml",
-        "storage.planledger_dir",
+        ".ledger/planledger/config.toml",
+        "data path is `../ledger/planledger/<project-uuid>/data`",
+        "storage.path",
         "configured Planledger storage directory",
     )
     for phrase in required_phrases:
         assert phrase.lower() in skill.lower(), f"Missing phrase: {phrase}"
+
+    forbidden_in_skill = (
+        "sibling-ledger",
+        ".planledger.toml",
+        "storage.planledger_dir",
+        "plan/config.toml",
+        "../ledger/plan/planledger",
+        "storage.workspace",
+    )
+    for phrase in forbidden_in_skill:
+        assert phrase.lower() not in skill.lower(), (
+            f"Forbidden phrase present: {phrase}"
+        )
 
     # Phrases that must not appear in the skill, even in the "Never do" section.
     # Use phrases that imply active usage rather than prohibition.
