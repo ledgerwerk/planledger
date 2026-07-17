@@ -19,7 +19,7 @@ Product contract
 What it does
 ------------
 
-- Stores independent plans under the canonical sibling mount ``../ledger/plan/planledger`` through ``sibling-ledger``.
+- Stores independent plans under the canonical sibling mount ``../ledger/planledger/<project-uuid>`` through ``sibling-ledger``.
 - Versions every meaningful plan change.
 - Keeps each plan as modular component files.
 - Renders a standalone Markdown artifact for human or coding-agent handoff.

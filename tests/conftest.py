@@ -35,6 +35,12 @@ def invoke_json(invoke):
 
 @pytest.fixture
 def initialized_workspace(tmp_path: Path, invoke):
-    result = invoke(tmp_path, "init", "--project-name", "Test Project")
+    result = invoke(
+        tmp_path,
+        "init",
+        "--project-name",
+        "Test Project",
+        "--create-sibling-store",
+    )
     assert result.exit_code == 0, result.stdout
     return tmp_path

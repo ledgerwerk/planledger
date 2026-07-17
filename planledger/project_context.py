@@ -133,14 +133,16 @@ def _validate_planledger_registration(manifest: LedgerProjectManifest) -> None:
             "Planledger must define exactly one data mount.",
         )
     mount = registration.mounts["data"]
+    expected_path = f"planledger/{manifest.project_uuid}"
     if (
         mount.storage != "workspace"
         or mount.scope != "project"
-        or mount.path != "plan/planledger"
+        or mount.path != expected_path
     ):
         raise PlanledgerError(
             "PLANLEDGER_REGISTRATION_CONFLICT",
-            "Planledger data must be workspace/project at plan/planledger.",
+            "Planledger data must be workspace/project at "
+            f"{expected_path}.",
         )
 
 
@@ -300,7 +302,9 @@ def load_workspace(
         )
     mount = layout.mounts["data"]
     store_root = (locator.project_root.parent / "ledger").resolve(strict=False)
-    expected_data_root = store_root / "plan" / "planledger"
+    expected_data_root = (
+        store_root / "planledger" / manifest.project_uuid
+    )
     if mount.path.resolve(strict=False) != expected_data_root:
         raise PlanledgerError(
             "PLANLEDGER_PATH_MISMATCH",
@@ -328,7 +332,11 @@ def load_workspace(
             "PLANLEDGER_CONFIG_MISSING", "Planledger project config is not resolved."
         )
     stable_config = _validate_stable_config(stable_config_path)
-    binding = validate_project_binding(data_root, project_uuid=manifest.project_uuid)
+    binding = validate_project_binding(
+        data_root,
+        project_uuid=manifest.project_uuid,
+        project_name=manifest.project_name,
+    )
     return Workspace(
         root=locator.project_root,
         project_root=locator.project_root,

@@ -116,13 +116,20 @@ def migrate_callback(
     source: Path | None = typer.Option(
         None, "--source", help="Legacy source data root"
     ),
-) -> None:
+    sibling_ledger_root: Path | None = typer.Option(
+        None,
+        "--sibling-ledger-root",
+        help="Migration-only destination sibling root",
+    ),
+    ) -> None:
     if ctx.invoked_subcommand is not None:
         return
 
     def run() -> tuple[dict[str, Any], str]:
         inspection = inspect_migration(
-            workspace_root_from_context(_context(ctx)), source=source
+            workspace_root_from_context(_context(ctx)),
+            source=source,
+            sibling_ledger_root=sibling_ledger_root,
         )
         payload = inspection_to_dict(inspection)
         return payload, _migration_message(payload)
@@ -136,24 +143,49 @@ def migrate_apply(
     source: Path | None = typer.Option(
         None, "--source", help="Legacy source data root"
     ),
+    backup: bool = typer.Option(
+        True, "--backup/--no-backup", help="Deprecated; backup is automatic."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Inspect without writing."
+    ),
+    create_sibling_store: bool = typer.Option(
+        False,
+        "--create-sibling-store",
+        help="Create the selected sibling store if absent",
+    ),
+    sibling_ledger_root: Path | None = typer.Option(
+        None,
+        "--sibling-ledger-root",
+        help="Migration-only destination sibling root",
+    ),
     backup_dir: Path | None = typer.Option(
         None, "--backup-dir", help="Backup destination"
     ),
-    create_sibling_store: bool = typer.Option(
-        False, "--create-sibling-store", help="Create the canonical sibling store"
-    ),
     retire_source: bool = typer.Option(
-        False, "--retire-source", help="Retire the source after verification"
+        False,
+        "--retire-source",
+        "--retire-legacy",
+        help="Retire the source after verification",
     ),
-) -> None:
+    ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         root = workspace_root_from_context(_context(ctx))
-        inspection = inspect_migration(root, source=source)
+        inspection = inspect_migration(
+            root,
+            source=source,
+            sibling_ledger_root=sibling_ledger_root,
+        )
+        if dry_run:
+            payload = inspection_to_dict(inspection)
+            payload["status"] = "dry_run"
+            return payload, _migration_message(payload)
         result = apply_migration(
             inspection,
             backup_dir=backup_dir,
             create_sibling_store=create_sibling_store,
             retire_source=retire_source,
+            backup=backup,
         )
         payload = result_to_dict(result)
         return (

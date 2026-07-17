@@ -10,14 +10,14 @@ Project setup
 .. code-block:: text
 
    planledger init [--project-name NAME] [--create-sibling-store]
-   planledger migrate [--source PATH]
-   planledger migrate apply [--source PATH] [--backup-dir PATH] [--create-sibling-store] [--retire-source]
+   planledger migrate [--source PATH] [--sibling-ledger-root PATH]
+   planledger migrate apply [--source PATH] [--sibling-ledger-root PATH] [--dry-run] [--create-sibling-store] [--backup-dir PATH] [--retire-source | --retire-legacy]
    planledger status [--json]
    planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
    planledger doctor [--json]
 
 ``planledger info`` prints a read-only inventory of the canonical sibling
-workspace: provider, direct data path, binding, schema-4 state, derived IDs,
+workspace: provider, UUID-scoped data path, binding, schema-4 state, derived IDs,
 the active plan/workshop, records, rendered artifacts, and disk size. It never
 writes or migrates storage. ``planledger status`` is the quick health/counts
 view, and ``planledger doctor`` checks the same invariants read-only.
@@ -108,8 +108,8 @@ Export
 ------
 
 ``planledger plan export`` writes the rendered Markdown to a workspace-root-relative
-path (default ``WORKSPACE_ROOT/PLAN_ID.md``). The canonical storage path remains
-``../ledger/plan/planledger``; exports are explicit workspace artifacts.
+path (default ``WORKSPACE_ROOT/PLAN_ID.md``). The canonical storage path is
+``../ledger/planledger/<project_uuid>``; exports are explicit workspace artifacts.
 
 .. code-block:: bash
 
@@ -164,7 +164,10 @@ name. The profile does not create planning-workshop records, does not replace
 
 Storage contract
 ----------------
-Planledger data is always resolved through ``sibling-ledger`` at
-``../ledger/plan/planledger``. The sibling root must contain a regular
-``.ledger-store`` marker and the data root must contain a matching binding.
-Legacy paths are handled only by the migration commands.
+Planledger data is resolved through ``sibling-ledger`` below the project-scoped
+mount ``planledger/<project_uuid>``. The default sibling root is ``../ledger``,
+but migration accepts ``--sibling-ledger-root PATH`` and writes below
+``PATH/planledger/<project_uuid>``. The base sibling root must contain a
+regular ``.ledger-store`` marker and each project data root must contain a matching
+binding. Multiple projects can share one base root because their UUID directories
+are isolated. Legacy paths are handled only by the migration commands.

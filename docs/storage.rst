@@ -10,7 +10,7 @@ The canonical topology is deliberately narrow and has no runtime fallback:
    <project-root>/.ledger/ledger.local.toml
    <project-root>/.ledger/plan/config.toml
    <project-root>/../ledger/.ledger-store
-   <project-root>/../ledger/plan/planledger/
+   <project-root>/../ledger/planledger/<project-uuid>/
      .ledger-project.toml
      storage.yaml
      allocations/plans/
@@ -29,7 +29,7 @@ The shared manifest contains a project-scoped workspace mount:
    [ledgers.planledger.mounts.data]
    storage = "workspace"
    scope = "project"
-   path = "plan/planledger"
+   path = "planledger/<project-uuid>"
 
 The machine-local shared provider selection is:
 
@@ -85,7 +85,7 @@ Migration
 
 ``planledger migrate`` is read-only. It classifies repository-local, legacy
 external, namespaced workspace, direct sibling, old canonical, partial, and
-invalid sources. The destination is always ``../ledger/plan/planledger``.
+invalid sources. The destination is always ``../ledger/planledger/<project-uuid>``.
 
 ``planledger migrate apply`` performs a fresh inspection, mandatory backup,
 same-store staging, conflict-safe copying, schema/config transformation,

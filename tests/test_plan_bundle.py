@@ -10,7 +10,9 @@ from planledger.storage import initialize_project, load_component_content, load_
 def test_bundle_dry_run_create_and_single_increment_update(
     tmp_path: Path, invoke
 ) -> None:
-    workspace = initialize_project(tmp_path, "Test Project")
+    workspace = initialize_project(
+        tmp_path, "Test Project", create_sibling_store=True
+    )
     create_bundle = tmp_path / "create.json"
     create_bundle.write_text(
         json.dumps(
@@ -144,7 +146,9 @@ def test_bundle_update_accepts_global_ref_and_dry_run_returns_derived_ref(
     tmp_path: Path,
     invoke_json,
 ) -> None:
-    workspace = initialize_project(tmp_path, "Test Project")
+    workspace = initialize_project(
+        tmp_path, "Test Project", create_sibling_store=True
+    )
     create_bundle = {
         "schema": "planledger.structured_plan.v1",
         "operation": "create",
@@ -180,7 +184,7 @@ def test_bundle_update_accepts_global_ref_and_dry_run_returns_derived_ref(
 
 
 def test_bundle_update_rejects_foreign_ref(tmp_path: Path, invoke_json) -> None:
-    initialize_project(tmp_path, "Test Project")
+    initialize_project(tmp_path, "Test Project", create_sibling_store=True)
     bundle = {
         "schema": "planledger.structured_plan.v1",
         "operation": "update",

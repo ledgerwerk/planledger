@@ -34,7 +34,7 @@ deliverable.
    planledger plan status plan-0001 done --reason "Ready for coding agent handoff."
 
 After ``done``, the rendered Markdown artifact lives under the canonical sibling
-store at ``../ledger/plan/planledger/plans/plan-0001/rendered/``.
+store at ``../ledger/planledger/<project-uuid>/plans/plan-0001/rendered/``.
 
 Export the rendered plan to the workspace root so the coding harness can read it:
 

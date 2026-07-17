@@ -2,7 +2,7 @@ Plan components
 ===============
 
 Each plan stores modular component files under the canonical sibling mount,
-for example ``../ledger/plan/planledger/plans/PLAN_ID/components/``. Some
+for example ``../ledger/planledger/<project-uuid>/plans/PLAN_ID/components/``. Some
 components are required for the plan to pass validation; others are optional.
 
 Component reference

@@ -62,7 +62,9 @@ def test_next_action_root_json_still_works(initialized_workspace: Path, invoke) 
 
 def test_next_action_no_plans(tmp_path: Path) -> None:
     workspace = initialize_project(
-        root=tmp_path, project_name="test", planledger_dir=".planledger"
+        root=tmp_path,
+        project_name="test",
+        create_sibling_store=True,
     )
     result = compute_next_action(workspace)
     assert result["workspace_initialized"] is True

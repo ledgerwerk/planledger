@@ -31,7 +31,7 @@ Data flow
 2. **Project context** validates the shared manifest, local sibling provider,
    direct mount, marker, binding, and schema-4 state.
 3. **Storage** reads and writes component files and plan metadata under
-   ``../ledger/plan/planledger``.
+   ``../ledger/planledger/<project-uuid>``.
 3. **Render** assembles components into a single Markdown document with YAML
    front matter.
 4. **Guardrails** inspects the rendered output to enforce done criteria.

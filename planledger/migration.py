@@ -13,7 +13,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -122,21 +122,33 @@ def _regular(path: Path) -> bool:
     return stat.S_ISREG(mode) and not stat.S_ISLNK(mode)
 
 
-def _source_uuid(config_path: Path | None, manifest_path: Path) -> str | None:
-    if manifest_path.is_file():
-        try:
-            value = _toml(manifest_path).get("project", {}).get("uuid")
-            if isinstance(value, str):
-                return value
-        except PlanledgerError:
-            return None
+def _manifest_uuid(manifest_path: Path) -> str | None:
+    if not manifest_path.is_file():
+        return None
+    try:
+        value = _toml(manifest_path).get("project", {}).get("uuid")
+    except PlanledgerError:
+        return None
+    return value if isinstance(value, str) else None
+
+
+
+def _source_uuid(config_path: Path | None, data_root: Path | None) -> str | None:
     if config_path is not None and config_path.is_file():
         try:
             value = _toml(config_path).get("project", {}).get("uuid")
-            if isinstance(value, str):
-                return value
         except PlanledgerError:
-            return None
+            value = None
+        if isinstance(value, str):
+            return value
+    if data_root is not None:
+        try:
+            state = _state(data_root)[0]
+        except Exception:
+            state = {}
+        value = state.get("project_uuid")
+        if isinstance(value, str):
+            return value
     return None
 
 
@@ -212,8 +224,11 @@ def _count_records(root: Path, kind: str) -> tuple[int, list[MigrationIssue]]:
         if (
             not isinstance(metadata, dict)
             or metadata.get("id") != entry.name
-            or metadata.get("kind") != kind
             or metadata.get("type") != kind
+            or (
+                metadata.get("kind") is not None
+                and metadata.get("kind") != kind
+            )
         ):
             issues.append(
                 MigrationIssue(
@@ -227,18 +242,38 @@ def _count_records(root: Path, kind: str) -> tuple[int, list[MigrationIssue]]:
     return count, issues
 
 
+def _sibling_root(project_root: Path, sibling_ledger_root: Path | None) -> Path:
+    if sibling_ledger_root is not None:
+        return sibling_ledger_root.expanduser().resolve(strict=False)
+    return (project_root.parent / "ledger").resolve(strict=False)
+
+
+
+def _planledger_container(sibling_root: Path) -> Path:
+    return sibling_root / "planledger"
+
+
+
+
 def _candidate_sources(
-    project_root: Path, config_path: Path | None
+    project_root: Path,
+    config_path: Path | None,
+    sibling_root: Path,
+    canonical_uuid: str | None,
 ) -> list[tuple[MigrationSourceKind, Path, Path | None]]:
     candidates: list[tuple[MigrationSourceKind, Path, Path | None]] = []
-    if (project_root / ".ledger" / "plan" / "data").exists():
-        candidates.append(
-            (
-                "repository_local_proposal",
-                project_root / ".ledger" / "plan" / "data",
-                config_path,
-            )
-        )
+    seen: set[Path] = set()
+
+    def add(kind: MigrationSourceKind, path: Path) -> None:
+        resolved = path.resolve(strict=False)
+        if resolved in seen or not resolved.exists():
+            return
+        seen.add(resolved)
+        candidates.append((kind, resolved, config_path))
+
+    repository = project_root / ".ledger" / "plan" / "data"
+    if repository.exists():
+        add("repository_local_proposal", repository)
     if config_path is not None and config_path.is_file():
         try:
             configured = _toml(config_path).get("storage", {}).get("planledger_dir")
@@ -248,26 +283,37 @@ def _candidate_sources(
             path = Path(configured).expanduser()
             if not path.is_absolute():
                 path = project_root / path
-            path = path.resolve(strict=False)
-            if path.exists() and path not in {item[1] for item in candidates}:
-                kind: MigrationSourceKind = (
-                    "legacy_local"
-                    if path.is_relative_to(project_root)
-                    else "legacy_external"
-                )
-                candidates.append((kind, path, config_path))
-    sibling = project_root.parent / "ledger"
-    namespace_root = sibling / "projects"
+            add(
+                "legacy_local" if path.resolve().is_relative_to(project_root) else "legacy_external",
+                path,
+            )
+    namespace_root = sibling_root / "projects"
     if namespace_root.is_dir():
         for candidate in namespace_root.glob("*/project/plan/planledger"):
             if candidate.is_dir():
-                candidates.append(("namespaced_workspace", candidate, config_path))
-    direct = sibling / "plan" / "planledger"
-    if direct.exists():
-        candidates.append(("direct_sibling_unbound", direct, config_path))
+                add("namespaced_workspace", candidate)
+    legacy_container = sibling_root / "plan" / "planledger"
+    if legacy_container.is_dir():
+        add("old_canonical", legacy_container)
+    container = _planledger_container(sibling_root)
+    binding = container / BINDING_FILENAME
+    if container.exists() and (
+        (container / "storage.yaml").exists()
+        or (container / "plans").exists()
+        or (container / "workshops").exists()
+    ):
+        if not binding.is_file() or canonical_uuid is None:
+            add("direct_sibling_unbound", container)
+        else:
+            try:
+                bound_uuid = _toml(binding).get("project_uuid")
+            except PlanledgerError:
+                bound_uuid = None
+            if bound_uuid == canonical_uuid:
+                add("direct_sibling_unbound", container)
     old = project_root / ".ledger" / "plan" / "ledgers" / "main"
     if old.exists():
-        candidates.append(("old_canonical", old, config_path))
+        add("old_canonical", old)
     return candidates
 
 
@@ -327,6 +373,7 @@ def inspect_migration(  # noqa: C901
     *,
     source: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    sibling_ledger_root: Path | None = None,
 ) -> PlanledgerMigrationInspection:
     effective_environment = os.environ if environ is None else environ
     if effective_environment.get("LEDGER_WORKSPACE_ROOT"):
@@ -340,15 +387,20 @@ def inspect_migration(  # noqa: C901
     manifest_path = project_root / ".ledger" / "ledger.toml"
     local_path = project_root / ".ledger" / "ledger.local.toml"
     stable_path = project_root / ".ledger" / "plan" / "config.toml"
+    sibling = _sibling_root(project_root, sibling_ledger_root)
+    container = _planledger_container(sibling)
+    marker = sibling / ".ledger-store"
     config_candidates = [
         project_root / "planledger.toml",
         project_root / ".planledger.toml",
     ]
     source_config = next((path for path in config_candidates if path.is_file()), None)
-    canonical_uuid = _source_uuid(None, manifest_path)
-    source_candidates = _candidate_sources(project_root, source_config)
+    canonical_uuid = _manifest_uuid(manifest_path)
+    source_candidates = _candidate_sources(
+        project_root, source_config, sibling, canonical_uuid
+    )
     if source is not None:
-        selected = source.resolve()
+        selected = source.expanduser().resolve(strict=False)
         source_candidates = [
             item for item in source_candidates if item[1].resolve() == selected
         ]
@@ -357,16 +409,19 @@ def inspect_migration(  # noqa: C901
     issues: list[MigrationIssue] = []
     if local_path.is_file():
         try:
-            local_document = _toml(local_path)
-            workspace_local = local_document.get("storage", {}).get("workspace", {})
+            workspace_local = _toml(local_path).get("storage", {}).get("workspace", {})
             if isinstance(workspace_local, dict) and "root" in workspace_local:
-                issues.append(
-                    MigrationIssue(
-                        "blocker",
-                        "WORKSPACE_ROOT_CONFLICT",
-                        "Shared local config contains a workspace root override.",
+                configured_root = Path(str(workspace_local["root"])).expanduser()
+                if not configured_root.is_absolute():
+                    configured_root = project_root / configured_root
+                if configured_root.resolve(strict=False) != sibling:
+                    issues.append(
+                        MigrationIssue(
+                            "blocker",
+                            "WORKSPACE_ROOT_CONFLICT",
+                            "Shared local config contains a workspace root override for another root.",
+                        )
                     )
-                )
             elif isinstance(workspace_local, dict) and workspace_local.get(
                 "provider"
             ) not in (None, "sibling-ledger"):
@@ -377,7 +432,7 @@ def inspect_migration(  # noqa: C901
                         "Shared local config selects another workspace provider.",
                     )
                 )
-        except PlanledgerError as exc:
+        except (PlanledgerError, TypeError, ValueError) as exc:
             issues.append(
                 MigrationIssue("blocker", "WORKSPACE_LOCAL_CONFIG_INVALID", str(exc))
             )
@@ -395,24 +450,18 @@ def inspect_migration(  # noqa: C901
         selected_kind, source_data, source_config = source_candidates[0]
     elif manifest_path.is_file():
         selected_kind = "canonical"
-    sibling = project_root.parent / "ledger"
-    marker = sibling / ".ledger-store"
-    target = sibling / "plan" / "planledger"
+    source_uuid = _source_uuid(source_config, source_data)
+    project_uuid = canonical_uuid or source_uuid
+    target = container / (project_uuid or "unresolved")
     target_binding = target / BINDING_FILENAME
     current_state = None
     if (target / "storage.yaml").is_file():
-        try:
-            current_state = _state(target)[0].get("schema_version")
-        except Exception:
-            current_state = None
+        current_state = _state(target)[0].get("schema_version")
     current_provider = None
     if local_path.is_file():
         try:
             current_provider = (
-                _toml(local_path)
-                .get("storage", {})
-                .get("workspace", {})
-                .get("provider")
+                _toml(local_path).get("storage", {}).get("workspace", {}).get("provider")
             )
         except PlanledgerError:
             current_provider = None
@@ -454,56 +503,33 @@ def inspect_migration(  # noqa: C901
                 f"Sibling store marker is missing or invalid: {marker}.",
             )
         )
-    source_uuid = _source_uuid(source_config, manifest_path)
-    if (
-        canonical_uuid is not None
-        and source_uuid is not None
-        and canonical_uuid != source_uuid
-    ):
-        issues.append(
-            MigrationIssue(
-                "blocker",
-                "PROJECT_UUID_MISMATCH",
-                "Source and canonical project UUIDs differ.",
-            )
-        )
     if source_data is not None:
         state, state_issues = _state(source_data)
         issues.extend(state_issues)
         plan_count, plan_issues = _count_records(source_data, "plan")
         workshop_count, workshop_issues = _count_records(source_data, "workshop")
         issues.extend(plan_issues + workshop_issues)
-        state_schema = (
-            state.get("schema_version")
-            if isinstance(state.get("schema_version"), int)
-            else None
-        )
-        next_plan = (
-            state.get("next_plan_id")
-            if isinstance(state.get("next_plan_id"), int)
-            else None
-        )
-        next_workshop = (
-            state.get("next_workshop_id")
-            if isinstance(state.get("next_workshop_id"), int)
-            else None
-        )
+        source_binding = source_data / BINDING_FILENAME
+        if source_binding.is_file() and project_uuid is not None:
+            try:
+                bound_uuid = _toml(source_binding).get("project_uuid")
+            except PlanledgerError:
+                bound_uuid = None
+            if bound_uuid != project_uuid:
+                issues.append(
+                    MigrationIssue(
+                        "blocker",
+                        "SOURCE_BINDING_UUID_MISMATCH",
+                        "Source binding belongs to another project.",
+                    )
+                )
+        state_schema = state.get("schema_version") if isinstance(state.get("schema_version"), int) else None
+        next_plan = state.get("next_plan_id") if isinstance(state.get("next_plan_id"), int) else None
+        next_workshop = state.get("next_workshop_id") if isinstance(state.get("next_workshop_id"), int) else None
         if state.get("next_plan_id") is not None and next_plan is None:
-            issues.append(
-                MigrationIssue(
-                    "blocker",
-                    "STATE_COUNTER_INVALID",
-                    "Legacy next_plan_id is malformed.",
-                )
-            )
+            issues.append(MigrationIssue("blocker", "STATE_COUNTER_INVALID", "Legacy next_plan_id is malformed."))
         if state.get("next_workshop_id") is not None and next_workshop is None:
-            issues.append(
-                MigrationIssue(
-                    "blocker",
-                    "STATE_COUNTER_INVALID",
-                    "Legacy next_workshop_id is malformed.",
-                )
-            )
+            issues.append(MigrationIssue("blocker", "STATE_COUNTER_INVALID", "Legacy next_workshop_id is malformed."))
     else:
         plan_count = workshop_count = 0
         state_schema = None
@@ -511,42 +537,41 @@ def inspect_migration(  # noqa: C901
     if target.exists() and target.is_symlink():
         issues.append(
             MigrationIssue(
-                "blocker", "TARGET_SYMLINK", f"Migration target is a symlink: {target}."
+                "blocker",
+                "TARGET_SYMLINK",
+                f"Migration target is a symlink: {target}.",
             )
         )
-    target_binding = target / BINDING_FILENAME
-    if (
-        target.exists()
-        and target.is_dir()
-        and not target_binding.exists()
-        and not any(target.iterdir())
-    ):
-        pass
-    elif (
-        target.exists()
-        and target.is_dir()
-        and not target_binding.exists()
-        and any(target.iterdir())
-    ):
-        issues.append(
-            MigrationIssue(
-                "blocker", "BINDING_MISSING", f"Non-empty target is unbound: {target}."
-            )
+    if target.exists() and target.is_dir():
+        if target_binding.is_file():
+            try:
+                target_uuid = _toml(target_binding).get("project_uuid")
+            except PlanledgerError:
+                target_uuid = None
+            if target_uuid != project_uuid:
+                issues.append(
+                    MigrationIssue(
+                        "blocker",
+                        "BINDING_UUID_MISMATCH",
+                        f"Target binding belongs to {target_uuid}, expected {project_uuid}.",
+                    )
+                )
+        target_has_unbound_data = any(target.iterdir()) and (
+            source_data is None or source_data.resolve() != target.resolve()
         )
+        if not target_binding.exists() and target_has_unbound_data:
+            issues.append(
+                MigrationIssue(
+                    "blocker",
+                    "BINDING_MISSING",
+                    f"Non-empty target is unbound: {target}.",
+                )
+            )
     copy_items = _copy_items(source_data, target)
     if any(item.action == "block-conflict" for item in copy_items):
-        issues.append(
-            MigrationIssue(
-                "blocker",
-                "UNKNOWN_SOURCE_ENTRY",
-                "Source contains unknown or symlinked entries.",
-            )
-        )
+        issues.append(MigrationIssue("blocker", "UNKNOWN_SOURCE_ENTRY", "Source contains unknown or symlinked entries."))
     ready = not any(issue.severity == "blocker" for issue in issues)
-    migration_required = (
-        selected_kind not in {"uninitialized", "canonical"}
-        or not target_binding.exists()
-    )
+    migration_required = selected_kind not in {"uninitialized", "canonical"} or not target_binding.exists()
     return PlanledgerMigrationInspection(
         project_root=project_root,
         source_kind=selected_kind,
@@ -751,7 +776,7 @@ def _activate_config(
             "data": {
                 "storage": "workspace",
                 "scope": "project",
-                "path": "plan/planledger",
+                "path": f"planledger/{project_uuid}",
             }
         },
     }
@@ -765,10 +790,15 @@ def _activate_config(
     storage = local.setdefault("storage", {})
     workspace = storage.get("workspace")
     if workspace is not None and "root" in workspace:
-        raise PlanledgerError(
-            "PLANLEDGER_WORKSPACE_ROOT_CONFLICT",
-            "Migration cannot replace a workspace root override.",
-        )
+        configured_root = Path(str(workspace["root"])).expanduser()
+        if not configured_root.is_absolute():
+            configured_root = inspection.project_root / configured_root
+        if configured_root.resolve(strict=False) != inspection.sibling_store_root:
+            raise PlanledgerError(
+                "PLANLEDGER_WORKSPACE_ROOT_CONFLICT",
+                "Migration cannot replace a workspace root override for another root.",
+            )
+        workspace.pop("root", None)
     if workspace is not None and workspace.get("provider") not in (
         None,
         "sibling-ledger",
@@ -803,9 +833,12 @@ def apply_migration(
     backup_dir: Path | None = None,
     create_sibling_store: bool = False,
     retire_source: bool = False,
+    backup: bool = True,
 ) -> PlanledgerMigrationResult:
     fresh = inspect_migration(
-        inspection.project_root, source=inspection.source_data_root
+        inspection.project_root,
+        source=inspection.source_data_root,
+        sibling_ledger_root=inspection.sibling_store_root,
     )
     issues = [
         issue
@@ -836,6 +869,14 @@ def apply_migration(
     project_uuid = (
         fresh.canonical_project_uuid or fresh.source_project_uuid or str(uuid4())
     )
+    if fresh.target_data_root.name == "unresolved":
+        target = _planledger_container(fresh.sibling_store_root) / project_uuid
+        fresh = replace(
+            fresh,
+            target_data_root=target,
+            target_binding_path=target / BINDING_FILENAME,
+            canonical_project_uuid=fresh.canonical_project_uuid or project_uuid,
+        )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = (
         backup_dir

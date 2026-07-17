@@ -22,6 +22,7 @@ BINDING_FILENAME = ".ledger-project.toml"
 class PlanledgerProjectBinding:
     schema_version: int
     project_uuid: str
+    project_name: str | None
     ledger: str
     mount: str
 
@@ -49,16 +50,21 @@ def _load(path: Path) -> dict[str, Any]:
 def _parse(document: dict[str, Any], path: Path) -> PlanledgerProjectBinding:
     schema = document.get("schema_version")
     project_uuid = document.get("project_uuid")
+    project_name = document.get("project_name")
     ledger = document.get("ledger")
     mount = document.get("mount")
     if schema != 1 or not all(
         isinstance(item, str) and item for item in (project_uuid, ledger, mount)
-    ):
+    ) or (project_name is not None and not isinstance(project_name, str)):
         raise PlanledgerError(
             "PLANLEDGER_BINDING_MALFORMED", f"Invalid project binding: {path}."
         )
     return PlanledgerProjectBinding(
-        1, cast(str, project_uuid), cast(str, ledger), cast(str, mount)
+        1,
+        cast(str, project_uuid),
+        cast(str, project_name) if project_name is not None else None,
+        cast(str, ledger),
+        cast(str, mount),
     )
 
 
@@ -80,8 +86,8 @@ def read_project_binding(data_root: Path) -> PlanledgerProjectBinding | None:
 
 
 def validate_project_binding(
-    data_root: Path, *, project_uuid: str
-) -> PlanledgerProjectBinding:
+    data_root: Path, *, project_uuid: str, project_name: str | None = None
+ ) -> PlanledgerProjectBinding:
     binding = read_project_binding(data_root)
     if binding is None:
         raise PlanledgerError(
@@ -93,6 +99,15 @@ def validate_project_binding(
         raise PlanledgerError(
             "PLANLEDGER_BINDING_UUID_MISMATCH",
             f"Binding belongs to project {binding.project_uuid}, not {project_uuid}.",
+        )
+    if (
+        project_name is not None
+        and binding.project_name is not None
+        and binding.project_name != project_name
+    ):
+        raise PlanledgerError(
+            "PLANLEDGER_BINDING_PROJECT_NAME_MISMATCH",
+            f"Binding project name is {binding.project_name}, not {project_name}.",
         )
     if binding.ledger != "planledger":
         raise PlanledgerError(
@@ -114,20 +129,30 @@ def directory_is_effectively_empty(data_root: Path) -> bool:
 
 
 def create_project_binding(
-    data_root: Path, *, project_uuid: str
-) -> PlanledgerProjectBinding:
+    data_root: Path, *, project_uuid: str, project_name: str | None = None
+ ) -> PlanledgerProjectBinding:
     data_root.mkdir(parents=True, exist_ok=True)
     path = binding_path(data_root)
-    document = f'schema_version = 1\nproject_uuid = {project_uuid!r}\nledger = "planledger"\nmount = "data"\n'
+    name_line = f"project_name = {project_name!r}\n" if project_name is not None else ""
+    document = (
+        "schema_version = 1\n"
+        f"project_uuid = {project_uuid!r}\n"
+        + name_line
+        + 'ledger = "planledger"\nmount = "data"\n'
+    )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
         fd = os.open(path, flags, 0o644)
     except FileExistsError:
-        return validate_project_binding(data_root, project_uuid=project_uuid)
+        return validate_project_binding(
+            data_root, project_uuid=project_uuid, project_name=project_name
+        )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(document)
     except Exception:
         path.unlink(missing_ok=True)
         raise
-    return validate_project_binding(data_root, project_uuid=project_uuid)
+    return validate_project_binding(
+        data_root, project_uuid=project_uuid, project_name=project_name
+    )

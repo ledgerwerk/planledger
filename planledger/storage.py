@@ -443,7 +443,7 @@ def _canonical_manifest(project_uuid: str, project_name: str) -> dict[str, Any]:
                     "data": {
                         "storage": "workspace",
                         "scope": "project",
-                        "path": "plan/planledger",
+                        "path": f"planledger/{project_uuid}",
                     },
                 },
             },
@@ -540,7 +540,7 @@ def initialize_project(
     project_uuid = str(uuid4())
     store_root = resolved_root.parent / "ledger"
     _ensure_sibling_store(store_root, create=create_sibling_store)
-    data_root = store_root / "plan" / "planledger"
+    data_root = store_root / "planledger" / project_uuid
     data_root.mkdir(parents=True, exist_ok=True)
     if not directory_is_effectively_empty(data_root):
         raise PlanledgerError(
@@ -556,7 +556,9 @@ def initialize_project(
     )
     stable_path.parent.mkdir(parents=True, exist_ok=True)
     _write_toml(stable_path, _canonical_stable_config())
-    binding = create_project_binding(data_root, project_uuid=project_uuid)
+    binding = create_project_binding(
+        data_root, project_uuid=project_uuid, project_name=project_name
+    )
     timestamp = now_iso()
     _write_yaml(
         data_root / STORAGE_FILENAME,

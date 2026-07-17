@@ -15,7 +15,7 @@ Step 1: Check status and initialize
    planledger init --create-sibling-store
 
 This creates or validates the canonical ``.ledger`` project metadata and resolves
-Planledger data through ``sibling-ledger`` at ``../ledger/plan/planledger``.
+Planledger data through ``sibling-ledger`` at ``../ledger/planledger/<project-uuid>``.
 
 Step 2: Route to workshop or plan
 ---------------------------------
@@ -166,4 +166,4 @@ The shared machine-local provider is ``.ledger/ledger.local.toml`` and must sele
 ``sibling-ledger``. Do not set ``LEDGER_WORKSPACE_ROOT`` or run Git from Planledger.
 For legacy layouts, run ``planledger migrate`` first. Apply only after reviewing
 the read-only report with ``planledger migrate apply``. The source is preserved by
-default and Taskledger data at ``../ledger/task/taskledger`` is never modified.
+default and Taskledger data at ``../ledger/taskledger/<project-uuid>`` is never modified.

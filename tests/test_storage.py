@@ -14,7 +14,9 @@ from planledger.storage import (
 
 
 def test_storage_creates_loads_and_lists_independent_plans(tmp_path: Path) -> None:
-    workspace = initialize_project(tmp_path, "Test Project")
+    workspace = initialize_project(
+        tmp_path, "Test Project", create_sibling_store=True
+    )
 
     first = create_plan(workspace, "First plan", "Please plan feature A.")
     second = create_plan(
