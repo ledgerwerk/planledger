@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import planledger.write_lock as _wl_module
 from planledger.errors import PlanledgerError
 from planledger.write_lock import (
     acquire_planledger_write_lock,
@@ -54,8 +55,11 @@ def test_acquire_releases_lock_on_exit(tmp_path: Path) -> None:
     assert snapshot.held is False
 
 
-def test_acquire_fails_when_other_writer_holds_lock(tmp_path: Path) -> None:
+def test_acquire_fails_when_other_writer_holds_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = _project_root(tmp_path)
+    monkeypatch.setattr(_wl_module, "_pid_alive", lambda _pid: True)
     with acquire_planledger_write_lock(
         project, command="init", project_uuid="00000000-0000-4000-8000-000000000003"
     ):
@@ -126,7 +130,10 @@ def test_inspect_reports_malformed_lock(tmp_path: Path) -> None:
     assert exc.value.code == "PLANLEDGER_WRITE_LOCK_INVALID"
 
 
-def test_require_quiescent_rejects_other_live_writer(tmp_path: Path) -> None:
+def test_require_quiescent_rejects_other_live_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_wl_module, "_pid_alive", lambda _pid: True)
     project = _project_root(tmp_path)
     path = write_lock_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
