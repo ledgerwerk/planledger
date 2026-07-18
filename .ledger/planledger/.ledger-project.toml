@@ -1,0 +1,6 @@
+schema_version = 1
+layout_version = 3
+project_uuid = "28a57c53-0510-4bfd-adff-11f4d50508db"
+tool = "planledger"
+mount = "config"
+storage = "project"

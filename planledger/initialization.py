@@ -28,6 +28,15 @@ from planledger.project_context import load_workspace as load_canonical_workspac
 
 PLANLEDGER_CONFIG_FILENAMES: tuple[str, str] = ("planledger.toml", ".planledger.toml")
 STORAGE_FILENAME = "storage.yaml"
+_RECOVERABLE_INIT_CODES: frozenset[str] = frozenset(
+    {
+        "PLANLEDGER_REGISTRATION_MISSING",
+        "PLANLEDGER_CONFIG_MISSING",
+        "PLANLEDGER_DATA_BINDING_INVALID",
+        "PLANLEDGER_CONFIG_BINDING_INVALID",
+        "PLANLEDGER_DATA_ROOT_MISSING",
+    }
+)
 
 
 def _write_toml(path: Path, document: dict[str, Any]) -> None:
@@ -97,6 +106,131 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     write_yaml_object(path, data)
 
 
+def _recover_workspace(
+    resolved_root: Path,
+    project_name: str,
+    project_uuid: str | None,
+    data_storage: str,
+    external_root: str | None,
+    create_external_store: bool | None,
+) -> Workspace:
+    """Recover or reinitialize an existing but incomplete Planledger workspace."""
+    from planledger.ledgercore_backend import (
+        DATA_MOUNT,
+        ensure_planledger_registration,
+        initialize_planledger_locations,
+        load_planledger_ledger_layout,
+        resolve_planledger_external_root,
+        write_planledger_manifest,
+    )
+
+    ledger_dir = resolved_root / ".ledger"
+    local_path = ledger_dir / "ledger.local.toml"
+    stable_path = ledger_dir / "planledger" / "config.toml"
+
+    try:
+        existing = load_canonical_workspace(resolved_root, require_initialized=False)
+        data_root = existing.data_root
+        if not existing.storage_path.is_file():
+            timestamp = utc_now_iso_string()
+            _write_yaml(
+                data_root / STORAGE_FILENAME,
+                {
+                    "schema_version": 4,
+                    "active_plan_id": None,
+                    "active_workshop_id": None,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+            )
+            for directory in (
+                "allocations/plans",
+                "allocations/workshops",
+                "migrations",
+                "plans",
+                "workshops",
+            ):
+                (data_root / directory).mkdir(parents=True, exist_ok=True)
+        return load_canonical_workspace(resolved_root)
+    except PlanledgerError as exc:
+        if exc.code not in _RECOVERABLE_INIT_CODES:
+            raise PlanledgerError(
+                "PLANLEDGER_INITIALIZATION_CONFLICT",
+                "Existing canonical Ledger configuration is incomplete or conflicting.",
+                remediation=["Run: planledger doctor", "Run: planledger migrate"],
+            ) from exc
+        data_storage_norm = data_storage
+        if data_storage_norm not in {"project", "external", "user-data"}:
+            raise PlanledgerError(
+                "PLANLEDGER_STORAGE_TARGET_INVALID",
+                f"Unsupported data storage {data_storage!r}.",
+                details={"allowed": ["project", "external", "user-data"]},
+            ) from exc
+        ext_root = external_root if data_storage_norm == "external" else None
+        manifest = ensure_planledger_registration(
+            resolved_root,
+            project_uuid=project_uuid or str(uuid4()),
+            project_name=project_name,
+            data_storage=cast(
+                "Literal['project', 'external', 'user-data']",
+                data_storage_norm,
+            ),
+            external_root=ext_root,
+        )
+        write_planledger_manifest(resolved_root, manifest, preserve_comments=True)
+        ledger_dir_planledger = ledger_dir / "planledger"
+        ledger_dir_planledger.mkdir(parents=True, exist_ok=True)
+        if not stable_path.exists():
+            _write_toml(stable_path, _canonical_stable_config())
+        if data_storage_norm == "external" and ext_root:
+            external_root_path = resolve_planledger_external_root(
+                ext_root,
+                project_root=resolved_root,
+            )
+            _initialize_planledger_external_store(
+                external_root_path,
+                create=bool(create_external_store),
+            )
+        layout = load_planledger_ledger_layout(resolved_root, validate_storage=False)
+        data_mount = layout.resolved_layout.mounts.get(DATA_MOUNT)
+        if data_mount is None:
+            raise PlanledgerError(
+                "PLANLEDGER_MOUNT_INVALID",
+                "Resolved Planledger layout must contain the data mount.",
+            ) from exc
+        data_root = data_mount.path
+        binding_exists = (data_root / ".ledger-project.toml").is_file()
+        initialize_planledger_locations(
+            layout,
+            initialize_config=True,
+            initialize_data=not binding_exists,
+        )
+        timestamp = utc_now_iso_string()
+        storage_yaml_path = data_root / STORAGE_FILENAME
+        if not storage_yaml_path.is_file():
+            _write_yaml(
+                storage_yaml_path,
+                {
+                    "schema_version": 4,
+                    "active_plan_id": None,
+                    "active_workshop_id": None,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+            )
+        for directory in (
+            "allocations/plans",
+            "allocations/workshops",
+            "migrations",
+            "plans",
+            "workshops",
+        ):
+            (data_root / directory).mkdir(parents=True, exist_ok=True)
+        if local_path.exists() and not local_path.is_file():
+            local_path.unlink()
+        return load_canonical_workspace(resolved_root)
+
+
 def initialize_project(
     root: Path,
     project_name: str,
@@ -127,38 +261,14 @@ def initialize_project(
     stable_path = ledger_dir / "planledger" / "config.toml"
 
     if manifest_path.exists() or stable_path.exists():
-        try:
-            existing = load_canonical_workspace(
-                resolved_root, require_initialized=False
-            )
-            data_root = existing.data_root
-            if not existing.storage_path.is_file():
-                timestamp = utc_now_iso_string()
-                _write_yaml(
-                    data_root / STORAGE_FILENAME,
-                    {
-                        "schema_version": 4,
-                        "active_plan_id": None,
-                        "active_workshop_id": None,
-                        "created_at": timestamp,
-                        "updated_at": timestamp,
-                    },
-                )
-                for directory in (
-                    "allocations/plans",
-                    "allocations/workshops",
-                    "migrations",
-                    "plans",
-                    "workshops",
-                ):
-                    (data_root / directory).mkdir(parents=True, exist_ok=True)
-            return load_canonical_workspace(resolved_root)
-        except PlanledgerError as exc:
-            raise PlanledgerError(
-                "PLANLEDGER_INITIALIZATION_CONFLICT",
-                "Existing canonical Ledger configuration is incomplete or conflicting.",
-                remediation=["Run: planledger doctor", "Run: planledger migrate"],
-            ) from exc
+        return _recover_workspace(
+            resolved_root,
+            project_name,
+            project_uuid,
+            data_storage,
+            external_root,
+            create_external_store,
+        )
 
     for legacy in PLANLEDGER_CONFIG_FILENAMES:
         if (resolved_root / legacy).exists():

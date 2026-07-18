@@ -124,12 +124,11 @@ def test_init_data_path_ends_in_data_leaf(tmp_path: Path) -> None:
     assert mount["storage"] == "external"
 
 
-def test_init_rejects_shared_manifest_without_planledger(
+def test_init_adds_planledger_to_shared_manifest(
     tmp_path: Path,
 ) -> None:
     # When the existing canonical manifest lacks a planledger registration,
-    # ``init`` refuses to silently rewrite the manifest. The user must run
-    # ``planledger migrate`` or remove the manifest before re-initializing.
+    # ``init`` adds the registration and initializes the project.
     project = tmp_path / "project"
     project.mkdir()
     sibling_ledger = project.parent / "ledger"
@@ -150,8 +149,9 @@ def test_init_rejects_shared_manifest_without_planledger(
         "shared",
         "--create-external-store",
     )
-    assert result.exit_code != 0
-    assert "MIGRATION" in result.stdout.upper() or "CONFLICT" in result.stdout.upper()
+    assert result.exit_code == 0
+    manifest = (project / ".ledger" / "ledger.toml").read_text(encoding="utf-8")
+    assert "planledger" in manifest
 
 
 def test_init_idempotent_on_valid_project(tmp_path: Path) -> None:

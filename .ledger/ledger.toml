@@ -10,3 +10,7 @@ storage = "project"
 
 [ledgers.releaseledger.mounts.indexes]
 storage = "cache"
+
+[ledgers.planledger.mounts.data]
+storage = "external"
+root = "../ledger"
