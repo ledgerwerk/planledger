@@ -36,6 +36,9 @@ from planledger.identity import (
     plan_ref,
     workshop_ref,
 )
+
+# Re-export initialize_project (moved to planledger.initialization)
+from planledger.initialization import initialize_project  # noqa: F401
 from planledger.models import (
     AppContext,
     ComponentSpec,
