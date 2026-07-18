@@ -33,7 +33,9 @@ def test_skill_describes_plan_only_workflow() -> None:
 
 
 def test_config_has_no_taskledger_integration() -> None:
-    config = (REPO_ROOT / "planledger.toml").read_text(encoding="utf-8")
+    config = (REPO_ROOT / ".ledger" / "planledger" / "config.toml").read_text(
+        encoding="utf-8"
+    )
 
     assert "integrations.taskledger" not in config
     assert "ledger_ref" not in config
