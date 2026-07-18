@@ -248,9 +248,8 @@ storage = "user-data"
 ```
 
 Planledger resolves relative, absolute, and supported home-relative external
-roots through Ledgercore. Use ``planledger --json status`` or ``planledger
-storage where`` for authoritative paths. Use ``planledger migrate`` to inspect
-legacy layouts and ``planledger migrate apply`` to move them safely.
+roots through Ledgercore. Use `planledger --json status` or `planledger storage where` for authoritative paths. Use `planledger migrate` to inspect
+legacy layouts and `planledger migrate apply` to move them safely.
 
 ## CLI surface
 
