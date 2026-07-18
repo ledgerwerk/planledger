@@ -62,7 +62,7 @@ def test_storage_where_json(tmp_path: Path) -> None:
     storage = payload["result"]["storage"]
     assert storage["mount"] == "data"
     assert storage["kind"] == "external"
-    assert storage["path"].endswith("/data")
+    assert Path(storage["path"]).name == "data"
 
 
 def test_storage_validate_json(tmp_path: Path) -> None:

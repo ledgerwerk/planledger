@@ -70,6 +70,8 @@ def write_lock_path(project_root: Path) -> Path:
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _pid_alive_win32(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -79,6 +81,25 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+if sys.platform == "win32":
+    import ctypes
+
+    def _pid_alive_win32(pid: int) -> bool:
+        """Check process liveness on Windows without TerminateProcess side-effect.
+
+        os.kill(pid, 0) on Windows calls TerminateProcess, which is unsafe for
+        a liveness probe.  Use OpenProcess with minimal rights instead.
+        """
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        # ERROR_ACCESS_DENIED (5) -> process exists but we lack rights.
+        return kernel32.GetLastError() == 5
 
 
 def inspect_write_lock(

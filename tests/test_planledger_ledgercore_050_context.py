@@ -90,7 +90,7 @@ def test_external_storage_loads(project_with_external: Path) -> None:
     workspace = load_workspace(project_with_external, require_initialized=False)
     assert workspace.data_storage == "external"
     assert workspace.storage_source == "manifest"
-    assert str(workspace.data_root).endswith("/data")
+    assert workspace.data_root.name == "data"
 
 
 def test_user_data_storage_loads(project_with_user_data: Path) -> None:
@@ -137,7 +137,7 @@ def test_status_json_for_schema3(tmp_path: Path, runner=None) -> None:
     assert storage["kind"] == "external"
     assert storage["mount"] == "data"
     assert storage["source"] == "manifest"
-    assert storage["path"].endswith("/data")
+    assert Path(storage["path"]).name == "data"
     assert storage["binding_status"] in {"valid", "absent"}
     for forbidden in (
         "workspace_provider",

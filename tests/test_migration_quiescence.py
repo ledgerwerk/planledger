@@ -9,6 +9,7 @@ lock.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,7 @@ def _seed_lock(project: Path, *, pid: int, command: str = "other") -> None:
 def test_quiescence_rejects_live_writer_before_copy(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    _seed_lock(project, pid=1)  # init is alive
+    _seed_lock(project, pid=os.getpid())  # init is alive (hostname differs -> not self)
     with pytest.raises(PlanledgerError) as exc:
         require_planledger_quiescent(project)
     assert exc.value.code == "PLANLEDGER_STORAGE_MIGRATION_ACTIVE_WRITER"
@@ -52,7 +53,7 @@ def test_quiescence_rejects_live_writer_before_activation(tmp_path: Path) -> Non
     # Same check fires immediately before activation, per plan section 15.
     project = tmp_path / "project"
     project.mkdir()
-    _seed_lock(project, pid=1)
+    _seed_lock(project, pid=os.getpid())
     with pytest.raises(PlanledgerError):
         require_planledger_quiescent(project)
 
