@@ -4,9 +4,9 @@ schema_version = 3
 uuid = "28a57c53-0510-4bfd-adff-11f4d50508db"
 name = "planledger"
 
-[ledgers.taskledger.mounts.data]
-storage = "external"
-root = "../ledger"
 
-[ledgers.taskledger.mounts.indexes]
+[ledgers.releaseledger.mounts.data]
+storage = "project"
+
+[ledgers.releaseledger.mounts.indexes]
 storage = "cache"

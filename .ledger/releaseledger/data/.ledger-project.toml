@@ -1,0 +1,7 @@
+schema_version = 1
+layout_version = 3
+project_uuid = "28a57c53-0510-4bfd-adff-11f4d50508db"
+project_name = "planledger"
+tool = "releaseledger"
+mount = "data"
+storage = "project"
