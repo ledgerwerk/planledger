@@ -15,8 +15,10 @@ from planledger.bundle import (
     apply_structured_workshop_bundle,
     load_bundle,
 )
+from planledger.diagnostics import doctor
 from planledger.errors import PlanledgerError
 from planledger.initialization import initialize_project
+from planledger.inventory import collect_inventory
 from planledger.migration import (
     apply_migration,
     inspection_to_dict,
@@ -24,6 +26,8 @@ from planledger.migration import (
     result_to_dict,
 )
 from planledger.models import AppContext, PlanStatus, Workspace
+from planledger.next_action import compute_next_action
+from planledger.project_context import ProjectInspection, inspect_project_context
 from planledger.prompt_profiles import load_prompt_profile
 from planledger.render import build_plan, build_workshop
 from planledger.storage import (
@@ -31,16 +35,13 @@ from planledger.storage import (
     activate_workshop,
     append_component,
     append_workshop_component,
-    collect_inventory,
     component_spec,
-    compute_next_action,
     create_plan,
     create_plan_from_workshop,
     create_workshop,
     diff_versions,
     diff_workshop_versions,
     discover_workspace,
-    doctor,
     get_active_plan_id,
     get_active_workshop_id,
     latest_rendered_path,
@@ -110,9 +111,6 @@ def _migration_message(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-
-
-
 @migrate_app.callback(invoke_without_command=True)
 def migrate_callback(
     ctx: typer.Context,
@@ -137,10 +135,10 @@ def migrate_callback(
         root = workspace_root_from_context(_context(ctx))
         inspection = plan_migration(
             root,
-            target_data_storage=data_storage,
+            target_data_storage=cast(Any, data_storage),
             target_external_root=external_root,
         )
-        payload = inspection_to_dict(inspection)
+        payload = cast(dict[str, Any], inspection_to_dict(inspection))
         if source is not None:
             payload["explicit_source"] = str(source)
         return payload, _migration_message(payload)
@@ -154,9 +152,7 @@ def migrate_apply(
     source: Path | None = typer.Option(
         None, "--source", help="Legacy source data root"
     ),
-    mode: str = typer.Option(
-        "move", "--mode", help="Migration mode: copy or move"
-    ),
+    mode: str = typer.Option("move", "--mode", help="Migration mode: copy or move"),
     data_storage: str = typer.Option(
         "external",
         "--data-storage",
@@ -170,9 +166,7 @@ def migrate_apply(
     backup_dir: Path | None = typer.Option(
         None, "--backup-dir", help="Backup destination"
     ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Inspect without writing."
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Inspect without writing."),
     adopt_external_store: bool = typer.Option(
         False,
         "--adopt-external-store",
@@ -183,12 +177,12 @@ def migrate_apply(
         root = workspace_root_from_context(_context(ctx))
         result = apply_migration(
             root,
-            mode=mode,
-            target_data_storage=data_storage,
+            mode=cast(Any, mode),
+            target_data_storage=cast(Any, data_storage),
             target_external_root=external_root,
             dry_run=dry_run,
         )
-        payload = result_to_dict(result)
+        payload = cast(dict[str, Any], result_to_dict(result))
         if source is not None:
             payload["explicit_source"] = str(source)
         prefix = "Migration dry-run\n" if dry_run else "Migration applied\n"
@@ -354,34 +348,68 @@ def _storage_dict(workspace: Workspace) -> dict[str, Any]:
     }
 
 
+def _inspection_payload(inspection: ProjectInspection) -> dict[str, Any]:
+    state = inspection.state
+    result: dict[str, Any] = {
+        "initialized": inspection.workspace is not None and state.kind == "canonical",
+        "project_state": state.kind,
+        "reasons": list(state.reasons),
+        "migration_required": state.kind
+        in {"legacy", "schema_migration_required", "storage_migration_incomplete"},
+        "next_command": (
+            "planledger migrate"
+            if state.kind in {"legacy", "schema_migration_required"}
+            else "planledger init"
+        ),
+    }
+    if inspection.legacy is not None:
+        legacy = inspection.legacy
+        if legacy.legacy_config_path is not None:
+            result["legacy_config_path"] = str(legacy.legacy_config_path)
+        if legacy.retired_artifacts:
+            result["retired_legacy_artifacts"] = [
+                str(path) for path in legacy.retired_artifacts
+            ]
+    if inspection.workspace is not None:
+        workspace = inspection.workspace
+        result.update(
+            {
+                "root": str(workspace.root),
+                "config_path": str(workspace.config_path),
+                "storage": _storage_dict(workspace),
+                "data_path": str(workspace.data_root),
+            }
+        )
+    elif inspection.locator is not None:
+        result["root"] = str(inspection.locator.project_root)
+        result["config_path"] = str(inspection.locator.manifest_path)
+    return result
+
+
 @storage_app.command("where")
 def storage_where(ctx: typer.Context) -> None:
     """Show where Planledger storage is located."""
     app_ctx = _context(ctx)
-    workspace = discover_workspace(app_ctx)
+    inspection = inspect_project_context(workspace_root_from_context(app_ctx))
+    result = _inspection_payload(inspection)
+    workspace = inspection.workspace
     if workspace is None:
-        result = {"initialized": False}
-        message = "Planledger is not initialized."
+        message = (
+            f"Planledger storage\n\n"
+            f"State: {inspection.state.kind}\n"
+            f"Next: {result['next_command']}"
+        )
     else:
-        result = {
-            "project": workspace.project_name,
-            "project_uuid": workspace.project_uuid,
-            "config_path": str(workspace.config_path),
-            "config_binding": "valid",
-            "storage": _storage_dict(workspace),
-            "data_path": str(workspace.data_root),
-        }
         message = (
             f"Planledger storage\n\n"
             f"Project: {workspace.project_name} ({workspace.project_uuid})\n"
             f"Config: {workspace.config_path}\n"
-            f"Config binding: valid\n\n"
             f"Data storage: {workspace.data_storage}\n"
             f"Selection source: {workspace.storage_source}\n"
         )
         if workspace.external_root:
             message += f"External root: {workspace.external_root}\n"
-        message += f"Data path: {workspace.data_root}\nData binding: valid\n"
+        message += f"Data path: {workspace.data_root}\n"
     _run_command(ctx, "storage.where", lambda: (result, message))
 
 
@@ -389,21 +417,20 @@ def storage_where(ctx: typer.Context) -> None:
 def storage_validate(ctx: typer.Context) -> None:
     """Read-only validation of Planledger storage."""
     app_ctx = _context(ctx)
-    workspace = discover_workspace(app_ctx)
+    inspection = inspect_project_context(workspace_root_from_context(app_ctx))
+    workspace = inspection.workspace
     if workspace is None:
-        result = {"initialized": False, "issues": ["uninitialized"]}
-        message = "Planledger is not initialized."
+        result = _inspection_payload(inspection)
+        result["issues"] = list(inspection.state.reasons) or [inspection.state.kind]
+        message = f"Planledger storage validation: {inspection.state.kind}."
     else:
         issues: list[str] = []
         try:
             storage_data(workspace)
         except Exception as exc:
             issues.append(str(exc))
-        result = {
-            "initialized": True,
-            "storage": _storage_dict(workspace),
-            "issues": issues,
-        }
+        result = _inspection_payload(inspection)
+        result["issues"] = issues
         message = f"Planledger storage validation: {len(issues)} issue(s)."
     _run_command(ctx, "storage.validate", lambda: (result, message))
 
@@ -414,21 +441,41 @@ def storage_set(
     storage: str = typer.Argument(
         ..., help="Storage kind: external, user-data, or project"
     ),
-    root: str | None = typer.Option(None, "--root", help="External root for external storage"),
+    root: str | None = typer.Option(
+        None, "--root", help="External root for external storage"
+    ),
     project: bool = typer.Option(False, "--project", help="Write to ledger.toml"),
     local_override: bool = typer.Option(
         False, "--local-storage-override", help="Write to ledger.local.toml"
     ),
 ) -> None:
     """Set the active Planledger data target."""
-    from planledger.ledgercore_backend import set_planledger_data_target
+    from planledger.ledgercore_backend import (
+        resolve_planledger_external_root,
+        set_planledger_data_target,
+        validate_planledger_external_store,
+    )
 
     app_ctx = _context(ctx)
     root_path = workspace_root_from_context(app_ctx)
     target = "local" if local_override else "manifest"
     if not (project or local_override):
         project = True
+    activated = storage != "external"
     try:
+        if storage == "external":
+            if root is None:
+                raise PlanledgerError(
+                    "PLANLEDGER_STORAGE_TARGET_INVALID",
+                    "External storage requires --root.",
+                )
+            resolved_root = resolve_planledger_external_root(
+                root,
+                project_root=root_path,
+            )
+            if resolved_root.exists() and any(resolved_root.iterdir()):
+                validate_planledger_external_store(resolved_root, allow_legacy=True)
+                activated = True
         set_planledger_data_target(
             root_path,
             storage=storage,  # type: ignore[arg-type]
@@ -444,7 +491,16 @@ def storage_set(
             lambda: (result, f"Storage set failed: {error_code}"),
         )
         return
-    result = {"ok": True, "storage": storage, "target": target, "root": root}
+    result = {
+        "ok": True,
+        "storage": storage,
+        "target": target,
+        "root": root,
+        "activated": activated,
+        "configuration_updated": True,
+    }
+    if not activated:
+        result["next_command"] = "planledger init --create-external-store"
     message = f"Planledger storage set: {storage} ({target})."
     _run_command(ctx, "storage.set", lambda: (result, message))
 
@@ -515,7 +571,9 @@ def init(
         None, "--project-name", help="Project name"
     ),
     data_storage: str = typer.Option(
-        "external", "--data-storage", help="Data storage: external, user-data, or project"
+        "external",
+        "--data-storage",
+        help="Data storage: external, user-data, or project",
     ),
     external_root: str = typer.Option(
         "../ledger", "--external-root", help="External root path (relative)"
@@ -530,13 +588,19 @@ def init(
         app_ctx = _context(ctx)
         root = workspace_root_from_context(app_ctx)
         from planledger.cli_writes import with_planledger_write_lock
+        from planledger.ledgercore_backend import resolve_planledger_external_root
 
-        with with_planledger_write_lock(
-            root, command="init", project_uuid="pending"
-        ):
-            store_existed = (root.parent / "ledger" / ".ledger-store.toml").is_file() or (
-                root.parent / "ledger" / ".ledger-store"
-            ).is_file()
+        with with_planledger_write_lock(root, command="init", project_uuid="pending"):
+            store_existed = False
+            if data_storage == "external":
+                resolved_external_root = resolve_planledger_external_root(
+                    external_root,
+                    project_root=root,
+                )
+                store_existed = any(
+                    (resolved_external_root / marker).is_file()
+                    for marker in (".ledger-store.toml", ".ledger-store")
+                )
             workspace = initialize_project(
                 root=root,
                 project_name=project_name or root.name,
@@ -578,11 +642,16 @@ def status(
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         app_ctx = _context(ctx)
-        workspace = discover_workspace(app_ctx)
         root = workspace_root_from_context(app_ctx)
-        if workspace is None:
-            result = {"initialized": False, "root": str(root)}
-            message = f"Planledger status\nWorkspace: {root}\nNot initialized."
+        inspection = inspect_project_context(root)
+        workspace = inspection.workspace
+        if workspace is None or inspection.state.kind != "canonical":
+            result = _inspection_payload(inspection)
+            message = (
+                f"Planledger status\nWorkspace: {root}\n"
+                f"State: {inspection.state.kind}\n"
+                f"Next: {result['next_command']}"
+            )
             return result, message
 
         config = workspace.config.get("project", {})
@@ -679,11 +748,6 @@ def status(
         if check:
             health_result = {"checked": True, **doctor(workspace)}
 
-        profiles = [
-            load_prompt_profile(workspace.config).to_dict()
-            for profile_name in ("planning_interview",)
-            if load_prompt_profile(workspace.config, name=profile_name).enabled
-        ]
         enabled_profile = load_prompt_profile(workspace.config)
         profiles = [enabled_profile.to_dict()] if enabled_profile.enabled else []
         result = {
@@ -994,11 +1058,16 @@ def info(
 
     def run() -> tuple[dict[str, Any], str]:
         app_ctx = _context(ctx)
-        workspace = discover_workspace(app_ctx)
         root = workspace_root_from_context(app_ctx)
-        if workspace is None:
-            result = {"initialized": False, "root": str(root)}
-            return result, f"Planledger info\nWorkspace: {root}\nNot initialized."
+        inspection = inspect_project_context(root)
+        workspace = inspection.workspace
+        if workspace is None or inspection.state.kind != "canonical":
+            result = _inspection_payload(inspection)
+            return result, (
+                f"Planledger info\nWorkspace: {root}\n"
+                f"State: {inspection.state.kind}\n"
+                f"Next: {result['next_command']}"
+            )
 
         if plan is not None and workshop is not None:
             raise PlanledgerError(
@@ -1107,15 +1176,32 @@ def info(
 def doctor_command(ctx: typer.Context) -> None:
     def run() -> tuple[dict[str, Any], str]:
         app_ctx = _context(ctx)
-        workspace = discover_workspace(app_ctx)
+        inspection = inspect_project_context(workspace_root_from_context(app_ctx))
+        workspace = inspection.workspace
         if workspace is None:
-            result = {
-                "healthy": False,
-                "errors": ["planledger is not initialized."],
-                "warnings": [],
-            }
+            result = _inspection_payload(inspection)
+            result.update(
+                {
+                    "healthy": False,
+                    "errors": list(inspection.state.reasons)
+                    or [f"Project state is {inspection.state.kind}."],
+                    "warnings": [],
+                    "remediation": [result["next_command"]],
+                }
+            )
             return result, "healthy: false"
         result = doctor(workspace)
+        result["project_state"] = inspection.state.kind
+        if inspection.legacy is not None and inspection.legacy.retired_artifacts:
+            result["retired_legacy_artifacts"] = [
+                str(path) for path in inspection.legacy.retired_artifacts
+            ]
+            for path in inspection.legacy.retired_artifacts:
+                result.setdefault("errors", []).append(
+                    f"Old Planledger schema detected at {path}; "
+                    "run `planledger migrate` or remove the retired source after verification."
+                )
+            result["healthy"] = False
         summary = "healthy: true" if result["healthy"] else "healthy: false"
         errors = result.get("errors", [])
         warnings = result.get("warnings", [])

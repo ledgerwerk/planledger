@@ -26,6 +26,7 @@ def _parse_prefixed(record_id: str, kind: str) -> int:
         return parse_workshop_number(record_id)
     raise ValueError(f"unknown kind {kind!r}")
 
+
 DOMAIN_TOMBSTONE_SCHEMA = 1
 MIGRATION_KIND_PLANLEDGER = "planledger"
 
@@ -88,18 +89,6 @@ def _parse_tombstone_directory(directory: Path, kind: str) -> list[str]:
     return tombstones
 
 
-def _sorted_ids(records: tuple[str, ...] | list[str], kind: str) -> list[tuple[str, int]]:
-    decorated: list[tuple[str, int]] = []
-    for record in records:
-        try:
-            number = _parse_prefixed(record, kind)
-        except ValueError:
-            continue
-        decorated.append((record, number))
-    decorated.sort(key=lambda item: item[1])
-    return decorated
-
-
 def _compute_counter_gaps(
     existing_ids: tuple[str, ...],
     legacy_counter: int,
@@ -154,14 +143,10 @@ def plan_domain_migration(
             _parse_kind_directory(source_root / "allocations" / "plans", "plan")
         )
         existing_workshop_allocations = tuple(
-            _parse_kind_directory(
-                source_root / "allocations" / "workshops", "workshop"
-            )
+            _parse_kind_directory(source_root / "allocations" / "workshops", "workshop")
         )
         existing_plan_tombstones = tuple(
-            _parse_tombstone_directory(
-                source_root / "allocations" / "plans", "plan"
-            )
+            _parse_tombstone_directory(source_root / "allocations" / "plans", "plan")
         )
         existing_workshop_tombstones = tuple(
             _parse_tombstone_directory(
@@ -169,13 +154,11 @@ def plan_domain_migration(
             )
         )
         existing_plan_records = set(existing_plans) | set(existing_plan_allocations)
-        existing_workshop_records = (
-            set(existing_workshops) | set(existing_workshop_allocations)
+        existing_workshop_records = set(existing_workshops) | set(
+            existing_workshop_allocations
         )
         plan_counter_value = plan_counter if plan_counter is not None else 0
-        workshop_counter_value = (
-            workshop_counter if workshop_counter is not None else 0
-        )
+        workshop_counter_value = workshop_counter if workshop_counter is not None else 0
         plan_tombstones_list = _compute_counter_gaps(
             tuple(existing_plan_records) + existing_plan_tombstones,
             plan_counter_value,
@@ -190,7 +173,9 @@ def plan_domain_migration(
         workshop_tombstones = tuple(sorted(workshop_tombstones_list))
         active_plan = read_legacy_active(state, "active_plan_id")
         active_workshop = read_legacy_active(state, "active_workshop_id")
-        if active_plan and active_plan in (existing_plan_records | set(plan_tombstones)):
+        if active_plan and active_plan in (
+            existing_plan_records | set(plan_tombstones)
+        ):
             preserve_active_plan = True
         if active_workshop and active_workshop in (
             existing_workshop_records | set(workshop_tombstones)
@@ -291,9 +276,7 @@ def write_migration_receipt(
     migrations_dir.mkdir(parents=True, exist_ok=True)
     completed = completed_at or _now_iso()
     safe_tag = completed.replace(":", "").replace("-", "")
-    receipt_path = migrations_dir / (
-        f"{safe_tag}-planledger-ledgercore-0.5.json"
-    )
+    receipt_path = migrations_dir / (f"{safe_tag}-planledger-ledgercore-0.5.json")
     payload = {
         "schema_version": 1,
         "storage_schema_before": receipt.source_state_schema,

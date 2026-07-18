@@ -23,6 +23,7 @@ from planledger.ledgercore_backend import (
     PlanledgerLedgerLayout,
     execute_planledger_layout_migration,
     load_planledger_ledger_layout,
+    resolve_planledger_external_root,
 )
 from planledger.legacy_layout import (
     LegacySource,
@@ -89,9 +90,7 @@ def inspection_to_dict(plan: MigrationPlan) -> dict[str, object]:
             "external_root": str(plan.target_external_root)
             if plan.target_external_root
             else None,
-            "data_root": str(plan.target_data_root)
-            if plan.target_data_root
-            else None,
+            "data_root": str(plan.target_data_root) if plan.target_data_root else None,
             "config_path": str(plan.target_config_path)
             if plan.target_config_path
             else None,
@@ -136,7 +135,9 @@ def result_to_dict(result: MigrationResult) -> dict[str, object]:
                 result.domain_receipt.workshop_tombstones
             ),
             "active_plan_preserved": result.domain_receipt.preserve_active_plan_id,
-            "active_workshop_preserved": result.domain_receipt.preserve_active_workshop_id,
+            "active_workshop_preserved": (
+                result.domain_receipt.preserve_active_workshop_id
+            ),
         },
     }
 
@@ -208,16 +209,19 @@ def _plan_from_canonical(
                 )
     target_external_root_path: Path | None = None
     if target_data_storage == "external":
-        target_external_root_path = (
-            project_root / target_external_root
-        ).resolve()
+        target_external_root_path = resolve_planledger_external_root(
+            target_external_root,
+            project_root=project_root,
+        )
     migration_required = (
         source_state_schema is not None
         and source_state_schema < 4
         or layout.data_storage != target_data_storage
     )
     return MigrationPlan(
-        source_kind="canonical" if source_state_schema == 4 else "schema_migration_required",
+        source_kind="canonical"
+        if source_state_schema == 4
+        else "schema_migration_required",
         source_config_path=layout.locator.manifest_path,
         source_data_root=source_data_root,
         source_state_schema=source_state_schema,
@@ -269,9 +273,10 @@ def _plan_from_legacy(
     )
     target_external_root_path: Path | None = None
     if target_data_storage == "external":
-        target_external_root_path = (
-            project_root / target_external_root
-        ).resolve()
+        target_external_root_path = resolve_planledger_external_root(
+            target_external_root,
+            project_root=project_root,
+        )
     return MigrationPlan(
         source_kind=legacy.kind,
         source_config_path=legacy.legacy_config_path,
@@ -427,9 +432,7 @@ def _prepare_staged_layout(plan: MigrationPlan) -> Path:
             )
         staged = plan.source_data_root
     else:
-        staged = plan.target_data_root.parent / (
-            plan.target_data_root.name + ".staged"
-        )
+        staged = plan.target_data_root.parent / (plan.target_data_root.name + ".staged")
     staged.mkdir(parents=True, exist_ok=True)
     return staged
 
@@ -463,9 +466,18 @@ def inspect_storage_migration(project_root: Path) -> dict[str, object]:
         return {"exists": False, "path": str(candidate), "phase": "absent"}
     try:
         journal = inspect_planledger_storage_migration(candidate)
-        return {"exists": True, "path": str(candidate), "phase": getattr(journal, "phase", "unknown")}
+        return {
+            "exists": True,
+            "path": str(candidate),
+            "phase": getattr(journal, "phase", "unknown"),
+        }
     except Exception as exc:  # pragma: no cover - defensive
-        return {"exists": True, "path": str(candidate), "phase": "invalid", "error": str(exc)}
+        return {
+            "exists": True,
+            "path": str(candidate),
+            "phase": "invalid",
+            "error": str(exc),
+        }
 
 
 def recover_storage_migration(project_root: Path) -> dict[str, object]:

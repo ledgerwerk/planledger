@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Legacy Planledger-owned binding markers are no longer used.
 
-Ledgercore 0.5.0 owns the ``.ledger-project.toml`` markers that mark config
-and mount ownership. This module preserves read-only compatibility for any
-external code that still imports the prior public names.
+Ledgercore 0.5 owns the ``.ledger-project.toml`` markers that mark config and
+mount ownership. This module preserves read-only compatibility for external
+code that still imports the prior public names.
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 

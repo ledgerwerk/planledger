@@ -73,7 +73,7 @@ def test_load_layout_rejects_cache_storage(tmp_path: Path) -> None:
     manifest.write_text(
         "schema_version = 3\n"
         '[project]\nuuid = "00000000-0000-4000-8000-000000000001"\nname = "x"\n'
-        "[ledgers.planledger.mounts.data]\nstorage = \"cache\"\n",
+        '[ledgers.planledger.mounts.data]\nstorage = "cache"\n',
         encoding="utf-8",
     )
     try:

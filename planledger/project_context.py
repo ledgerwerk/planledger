@@ -21,27 +21,7 @@ from planledger.ledgercore_backend import (
     PlanledgerLedgerLayout,
     load_planledger_ledger_layout,
 )
-
-_PROJECT_STATE_KINDS = {
-    "uninitialized",
-    "legacy",
-    "schema_migration_required",
-    "registration_missing",
-    "registration_invalid",
-    "config_missing",
-    "config_binding_missing",
-    "config_binding_invalid",
-    "data_missing",
-    "data_binding_missing",
-    "data_binding_invalid",
-    "external_store_invalid",
-    "storage_migration_incomplete",
-    "state_missing",
-    "state_invalid",
-    "canonical",
-    "partial",
-    "invalid",
-}
+from planledger.legacy_layout import LegacySource, discover_legacy_source
 
 ProjectStateKind = Literal[
     "uninitialized",
@@ -69,6 +49,15 @@ ProjectStateKind = Literal[
 class ProjectState:
     kind: ProjectStateKind
     reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInspection:
+    state: ProjectState
+    locator: LedgerProjectLocator | None = None
+    layout: PlanledgerLedgerLayout | None = None
+    workspace: Workspace | None = None
+    legacy: LegacySource | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +162,8 @@ def _validate_stable_config(config_path: Path) -> dict[str, Any]:
     if found:
         raise PlanledgerError(
             "PLANLEDGER_CONFIG_CONFLICT",
-            f"Stable Planledger config contains prohibited keys: {', '.join(sorted(found))}.",
+            "Stable Planledger config contains prohibited keys: "
+            f"{', '.join(sorted(found))}.",
         )
     return config
 
@@ -196,11 +186,6 @@ def _workspace_config(
 
 
 def _resolve_storage_state(layout: PlanledgerLedgerLayout) -> None:
-    if layout.data_storage == "cache":
-        raise PlanledgerError(
-            "PLANLEDGER_STORAGE_TARGET_INVALID",
-            "Planledger data mount must not use cache storage.",
-        )
     if layout.data_storage not in {"project", "external", "user-data"}:
         raise PlanledgerError(
             "PLANLEDGER_STORAGE_TARGET_INVALID",
@@ -213,38 +198,43 @@ def _resolve_required_binding_status(layout: PlanledgerLedgerLayout) -> None:
     if report is None:
         return
     for result in report.results:
-        if not result.valid:
-            raise PlanledgerError(
-                "PLANLEDGER_STORAGE_BINDING_INVALID",
-                result.reason or "Planledger storage binding is invalid.",
-                details={"path": str(result.path)},
-            )
-
-
-def _ensure_external_store_marker(layout: PlanledgerLedgerLayout) -> None:
-    if layout.data_storage != "external":
-        return
-    external_root = layout.external_root
-    if external_root is None:
-        return
-    from planledger.ledgercore_backend import validate_planledger_external_store
-
-    try:
-        validate_planledger_external_store(external_root, allow_legacy=True)
-    except PlanledgerError:
-        raise
-    except Exception as exc:
+        if result.valid:
+            continue
+        mount_name = (
+            "config" if result.path == layout.resolved_layout.tool_config_path else None
+        )
+        mount = next(
+            (
+                candidate_name
+                for candidate_name, candidate in layout.resolved_layout.mounts.items()
+                if candidate.path == result.path
+            ),
+            None,
+        )
+        if mount is not None:
+            mount_name = mount
+        reason = result.reason or "Planledger storage binding is invalid."
+        validation_kind = "config_binding" if mount_name == "config" else "data_binding"
+        if "external store marker" in reason.lower():
+            validation_kind = "external_store_marker"
         raise PlanledgerError(
-            "PLANLEDGER_EXTERNAL_STORE_INVALID",
-            f"Planledger external store is invalid: {external_root}.",
-            details={"path": str(external_root)},
-        ) from exc
+            "PLANLEDGER_DATA_BINDING_INVALID",
+            reason,
+            details={
+                "mount": mount_name or "unknown",
+                "path": str(result.path),
+                "reason": reason,
+                "validation_kind": validation_kind,
+                "operation": "load_workspace",
+            },
+        )
 
 
 def load_workspace(
     start: Path,
     *,
     require_initialized: bool = True,
+    validate_storage: bool = True,
     environ: Mapping[str, str] | None = None,
 ) -> Workspace:
     effective_environment = os.environ if environ is None else environ
@@ -258,10 +248,10 @@ def load_workspace(
                 "Use planledger storage set ... for storage changes",
             ],
         )
-    layout = load_planledger_ledger_layout(start, validate_storage=True)
+    layout = load_planledger_ledger_layout(start, validate_storage=validate_storage)
     _resolve_storage_state(layout)
-    _resolve_required_binding_status(layout)
-    _ensure_external_store_marker(layout)
+    if validate_storage:
+        _resolve_required_binding_status(layout)
     data_mount = layout.resolved_layout.mounts.get(DATA_MOUNT)
     if data_mount is None:
         raise PlanledgerError(
@@ -312,52 +302,122 @@ def load_workspace(
     )
 
 
-def classify_project_state(start: Path) -> ProjectState:
-    try:
-        locator = locate_project(start)
-    except Exception as exc:
-        return ProjectState("invalid", (str(exc),))
-    if locator is None:
-        return ProjectState("uninitialized")
-    if locator.is_legacy:
-        return ProjectState(
-            "legacy", ("legacy_config_found", str(locator.manifest_path))
-        )
-    if not locator.manifest_path.is_file():
-        return ProjectState("partial", ("manifest_missing",))
-    try:
-        loaded = load_planledger_ledger_layout(start, validate_storage=False)
-    except Exception as exc:
-        return ProjectState(
-            "invalid",
-            (str(exc) or exc.__class__.__name__,),
-        )
-    if loaded.loaded_project.manifest.schema_version != 3:
-        return ProjectState(
-            "schema_migration_required",
-            (f"schema_version={loaded.loaded_project.manifest.schema_version}",),
-        )
-    if TOOL_NAME not in loaded.loaded_project.manifest.ledgers:
-        return ProjectState("registration_missing")
-    try:
-        load_workspace(start)
-    except PlanledgerError as exc:
-        kind = _PROJECT_STATE_KIND_FROM_CODE.get(exc.code, "invalid")
-        return ProjectState(kind, (exc.code,))
-    return ProjectState("canonical")
-
-
 _PROJECT_STATE_KIND_FROM_CODE: dict[str, ProjectStateKind] = {
     "PLANLEDGER_REGISTRATION_MISSING": "registration_missing",
     "PLANLEDGER_REGISTRATION_INVALID": "registration_invalid",
     "PLANLEDGER_CONFIG_MISSING": "config_missing",
-    "PLANLEDGER_CONFIG_MALFORMED": "config_invalid",
+    "PLANLEDGER_CONFIG_MALFORMED": "invalid",
     "PLANLEDGER_DATA_BINDING_INVALID": "data_binding_invalid",
     "PLANLEDGER_CONFIG_BINDING_INVALID": "config_binding_invalid",
     "PLANLEDGER_DATA_ROOT_MISSING": "data_missing",
     "PLANLEDGER_EXTERNAL_STORE_INVALID": "external_store_invalid",
     "PLANLEDGER_LEDGER_SCHEMA_MIGRATION_REQUIRED": "schema_migration_required",
-    "PLANLEDGER_LEDGER_PROJECT_INVALID": "canonical",
+    "PLANLEDGER_LEDGER_PROJECT_INVALID": "invalid",
     "PLANLEDGER_LEDGER_TOML_INVALID": "invalid",
     "PLANLEDGER_STORAGE_BINDING_INVALID": "data_binding_invalid",
 }
+
+
+def _state_for_error(exc: PlanledgerError) -> ProjectState:
+    if "schema 2" in str(exc).lower() or "schema_version = 2" in str(exc).lower():
+        kind: ProjectStateKind = "schema_migration_required"
+    else:
+        kind = _PROJECT_STATE_KIND_FROM_CODE.get(exc.code, "invalid")
+    return ProjectState(kind, (exc.code, str(exc)))
+
+
+def inspect_project_context(start: Path) -> ProjectInspection:
+    root = start.resolve(strict=False)
+    try:
+        locator = locate_project(root)
+        legacy = discover_legacy_source(root)
+    except PlanledgerError as exc:
+        return ProjectInspection(state=_state_for_error(exc))
+    except Exception as exc:
+        return ProjectInspection(
+            state=ProjectState("invalid", (str(exc) or type(exc).__name__,))
+        )
+
+    if locator is None:
+        if legacy.kind == "schema_migration_required":
+            state = ProjectState("schema_migration_required", legacy.blockers)
+        elif legacy.kind != "uninitialized":
+            state = ProjectState("legacy", (legacy.kind,))
+        else:
+            state = ProjectState("uninitialized")
+        return ProjectInspection(state=state, locator=locator, legacy=legacy)
+    if locator.is_legacy:
+        return ProjectInspection(
+            state=ProjectState(
+                "legacy", ("legacy_config_found", str(locator.manifest_path))
+            ),
+            locator=locator,
+            legacy=legacy,
+        )
+    if not locator.manifest_path.is_file():
+        return ProjectInspection(
+            state=ProjectState("partial", ("manifest_missing",)),
+            locator=locator,
+            legacy=legacy,
+        )
+
+    try:
+        layout = load_planledger_ledger_layout(root, validate_storage=False)
+    except PlanledgerError as exc:
+        return ProjectInspection(
+            state=_state_for_error(exc), locator=locator, legacy=legacy
+        )
+    except Exception as exc:
+        return ProjectInspection(
+            state=ProjectState("invalid", (str(exc) or type(exc).__name__,)),
+            locator=locator,
+            legacy=legacy,
+        )
+    if layout.loaded_project.manifest.schema_version != 3:
+        return ProjectInspection(
+            state=ProjectState(
+                "schema_migration_required",
+                (f"schema_version={layout.loaded_project.manifest.schema_version}",),
+            ),
+            locator=locator,
+            layout=layout,
+            legacy=legacy,
+        )
+
+    try:
+        workspace = load_workspace(
+            root,
+            require_initialized=False,
+            validate_storage=False,
+        )
+    except PlanledgerError as exc:
+        return ProjectInspection(
+            state=_state_for_error(exc),
+            locator=locator,
+            layout=layout,
+            legacy=legacy,
+        )
+    try:
+        validated_workspace = load_workspace(root, require_initialized=False)
+    except PlanledgerError as exc:
+        state = _state_for_error(exc)
+    else:
+        workspace = validated_workspace
+        state = ProjectState("canonical")
+    if legacy.retired_artifacts:
+        state = ProjectState(
+            state.kind,
+            state.reasons
+            + tuple(f"retired_artifact:{path}" for path in legacy.retired_artifacts),
+        )
+    return ProjectInspection(
+        state=state,
+        locator=locator,
+        layout=layout,
+        workspace=workspace,
+        legacy=legacy,
+    )
+
+
+def classify_project_state(start: Path) -> ProjectState:
+    return inspect_project_context(start).state

@@ -19,6 +19,11 @@ from tomlkit import dumps as toml_dumps
 from planledger.errors import PlanledgerError
 from planledger.identity import DEFAULT_LEDGER_CODE, DEFAULT_LEDGER_NAME
 from planledger.models import Workspace
+from planledger.persistence import (
+    atomic_write_text_file,
+    utc_now_iso_string,
+    write_yaml_object,
+)
 from planledger.project_context import load_workspace as load_canonical_workspace
 
 PLANLEDGER_CONFIG_FILENAMES: tuple[str, str] = ("planledger.toml", ".planledger.toml")
@@ -26,9 +31,7 @@ STORAGE_FILENAME = "storage.yaml"
 
 
 def _write_toml(path: Path, document: dict[str, Any]) -> None:
-    from planledger.storage import _atomic_write
-
-    _atomic_write(path, toml_dumps(document))
+    atomic_write_text_file(path, toml_dumps(document))
 
 
 def _canonical_stable_config() -> dict[str, Any]:
@@ -53,7 +56,6 @@ def _initialize_planledger_external_store(
     store_root: Path,
     *,
     create: bool,
-    legacy_compatible: bool = True,
 ) -> bool:
     """Create or refresh the Ledgercore external store marker."""
     from planledger.ledgercore_backend import (
@@ -67,9 +69,7 @@ def _initialize_planledger_external_store(
             f"Canonical external store is not a directory: {store_root}.",
         )
     if store_root.exists() and not any(store_root.iterdir()):
-        initialize_planledger_external_store(
-            store_root, legacy_compatible=legacy_compatible
-        )
+        initialize_planledger_external_store(store_root)
         return True
     if not store_root.exists():
         if not create:
@@ -81,9 +81,7 @@ def _initialize_planledger_external_store(
                 ],
             )
         store_root.mkdir(parents=True)
-        initialize_planledger_external_store(
-            store_root, legacy_compatible=legacy_compatible
-        )
+        initialize_planledger_external_store(store_root)
         return True
     try:
         validate_planledger_external_store(store_root, allow_legacy=True)
@@ -91,16 +89,12 @@ def _initialize_planledger_external_store(
     except PlanledgerError:
         if not create:
             raise
-        initialize_planledger_external_store(
-            store_root, legacy_compatible=legacy_compatible
-        )
+        initialize_planledger_external_store(store_root)
         return True
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
-    from planledger.storage import _write_yaml as _storage_write_yaml
-
-    _storage_write_yaml(path, data)
+    write_yaml_object(path, data)
 
 
 def initialize_project(
@@ -122,6 +116,7 @@ def initialize_project(
         ensure_planledger_registration,
         initialize_planledger_locations,
         load_planledger_ledger_layout,
+        resolve_planledger_external_root,
         write_planledger_manifest,
     )
 
@@ -137,10 +132,8 @@ def initialize_project(
                 resolved_root, require_initialized=False
             )
             data_root = existing.data_root
-            if not (existing.storage_path.is_file()):
-                from planledger.storage import now_iso
-
-                timestamp = now_iso()
+            if not existing.storage_path.is_file():
+                timestamp = utc_now_iso_string()
                 _write_yaml(
                     data_root / STORAGE_FILENAME,
                     {
@@ -190,13 +183,19 @@ def initialize_project(
         external_root if data_storage_normalized == "external" else None
     )
 
-    if data_storage_normalized == "external" and external_root_value:
-        candidate = (resolved_root / external_root_value).resolve()
-        external_root_path = candidate
+    if data_storage_normalized == "external":
+        if not external_root_value:
+            raise PlanledgerError(
+                "PLANLEDGER_STORAGE_TARGET_INVALID",
+                "External storage requires an external_root value.",
+            )
+        external_root_path = resolve_planledger_external_root(
+            external_root_value,
+            project_root=resolved_root,
+        )
         _initialize_planledger_external_store(
             external_root_path,
             create=bool(create_external_store),
-            legacy_compatible=True,
         )
         data_root = derive_planledger_external_mount_path(
             external_root_value,
@@ -205,9 +204,7 @@ def initialize_project(
             project_root=resolved_root,
         )
     elif data_storage_normalized == "project":
-        data_root = (
-            resolved_root / ".ledger" / "planledger" / DATA_MOUNT
-        ).resolve()
+        data_root = (resolved_root / ".ledger" / "planledger" / DATA_MOUNT).resolve()
     else:
         from platformdirs import user_data_path
 
@@ -251,9 +248,7 @@ def initialize_project(
         initialize_data=True,
     )
 
-    from planledger.storage import now_iso
-
-    timestamp = now_iso()
+    timestamp = utc_now_iso_string()
     _write_yaml(
         data_root / STORAGE_FILENAME,
         {

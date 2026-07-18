@@ -136,7 +136,7 @@ def test_init_rejects_shared_manifest_without_planledger(
     sibling_ledger.mkdir()
     (project / ".ledger").mkdir()
     (project / ".ledger" / "ledger.toml").write_text(
-        'schema_version = 3\n'
+        "schema_version = 3\n"
         '[project]\nuuid = "00000000-0000-4000-8000-000000000099"\n'
         'name = "shared"\n'
         '[ledgers.taskledger.mounts.data]\nstorage = "external"\n'
@@ -159,9 +159,9 @@ def test_init_idempotent_on_valid_project(tmp_path: Path) -> None:
     project.mkdir()
     (tmp_path / "ledger").mkdir()
     _invoke(project, "init", "--project-name", "demo", "--create-external-store")
-    config_before = (
-        project / ".ledger" / "planledger" / "config.toml"
-    ).read_text(encoding="utf-8")
+    config_before = (project / ".ledger" / "planledger" / "config.toml").read_text(
+        encoding="utf-8"
+    )
     manifest_before = (project / ".ledger" / "ledger.toml").read_text(encoding="utf-8")
 
     second = _invoke(
@@ -172,9 +172,9 @@ def test_init_idempotent_on_valid_project(tmp_path: Path) -> None:
         "--create-external-store",
     )
     assert second.exit_code == 0, second.stdout
-    config_after = (
-        project / ".ledger" / "planledger" / "config.toml"
-    ).read_text(encoding="utf-8")
+    config_after = (project / ".ledger" / "planledger" / "config.toml").read_text(
+        encoding="utf-8"
+    )
     manifest_after = (project / ".ledger" / "ledger.toml").read_text(encoding="utf-8")
     assert config_after == config_before
     assert manifest_after == manifest_before
@@ -184,8 +184,8 @@ def test_init_refuses_legacy_planledger_toml(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     (project / "planledger.toml").write_text(
-        "[project]\nuuid = \"00000000-0000-4000-8000-000000000001\"\n"
-        "[storage]\nplanledger_dir = \".planledger\"\n",
+        '[project]\nuuid = "00000000-0000-4000-8000-000000000001"\n'
+        '[storage]\nplanledger_dir = ".planledger"\n',
         encoding="utf-8",
     )
     result = _invoke(project, "init", "--project-name", "demo")
@@ -247,9 +247,7 @@ def test_init_does_not_emit_sibling_ledger_vocabulary(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("bad_storage", ["cache", "ledger", "vfs"])
-def test_init_rejects_invalid_storage_kind(
-    tmp_path: Path, bad_storage: str
-) -> None:
+def test_init_rejects_invalid_storage_kind(tmp_path: Path, bad_storage: str) -> None:
     project = tmp_path / "project"
     project.mkdir()
     (tmp_path / "ledger").mkdir()
@@ -262,3 +260,10 @@ def test_init_rejects_invalid_storage_kind(
         bad_storage,
     )
     assert result.exit_code != 0
+
+
+def test_storage_initialization_import_is_compatibility_alias() -> None:
+    from planledger.initialization import initialize_project as canonical
+    from planledger.storage import initialize_project as compatibility
+
+    assert compatibility is canonical

@@ -48,9 +48,7 @@ def _make_legacy_project(
     )
     for plan in existing_plans:
         (plans_dir / plan).mkdir(exist_ok=True)
-        (plans_dir / plan / "plan.yaml").write_text(
-            f"id: {plan}\n", encoding="utf-8"
-        )
+        (plans_dir / plan / "plan.yaml").write_text(f"id: {plan}\n", encoding="utf-8")
     for workshop in existing_workshops:
         (workshops_dir / workshop).mkdir(exist_ok=True)
         (workshops_dir / workshop / "workshop.yaml").write_text(

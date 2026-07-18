@@ -11,11 +11,11 @@ Step 1: Check status and initialize
 
    planledger --json status
    planledger init
-   # Use this only when ../ledger is absent and its creation is intentional
-   planledger init --create-sibling-store
+   # Create the default external root when it is absent
+   planledger init --create-external-store
 
 This creates or validates the canonical ``.ledger`` project metadata and resolves
-Planledger data through ``sibling-ledger`` at ``../ledger/planledger/<project-uuid>``.
+Planledger data through Ledgercore at ``../ledger/planledger/<project-uuid>/data``.
 
 Step 2: Route to workshop or plan
 ---------------------------------
@@ -144,7 +144,7 @@ not interview the user.
 
 .. code-block:: toml
 
-   # .ledger/plan/config.toml
+   # .ledger/planledger/config.toml
    [prompt_profiles.planning_workshop]
    enabled = true
    activation = "always"   # or "triggered"
@@ -162,8 +162,8 @@ canonical feature name; ``shape this feature`` is only a trigger phrase.
 
 Storage and migration
 ---------------------
-The shared machine-local provider is ``.ledger/ledger.local.toml`` and must select
-``sibling-ledger``. Do not set ``LEDGER_WORKSPACE_ROOT`` or run Git from Planledger.
-For legacy layouts, run ``planledger migrate`` first. Apply only after reviewing
-the read-only report with ``planledger migrate apply``. The source is preserved by
-default and Taskledger data at ``../ledger/taskledger/<project-uuid>`` is never modified.
+Ledgercore owns the manifest, optional local override, bindings, external marker,
+and resolved paths. Use ``planledger --json status`` or ``planledger storage where``
+instead of calculating paths. For legacy layouts, run ``planledger migrate`` first
+and apply only after reviewing the read-only report with ``planledger migrate apply``.
+The source is preserved by default and other ledger data is never modified.

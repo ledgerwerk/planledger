@@ -52,7 +52,7 @@ def _write_legacy_v2_workspace(
     plan_dir = ledger_dir / "plan"
     plan_dir.mkdir()
     (plan_dir / "config.toml").write_text(
-        "[ledger]\ncode = \"pl\"\nname = \"planledger\"\n",
+        '[ledger]\ncode = "pl"\nname = "planledger"\n',
         encoding="utf-8",
     )
     legacy = project / "legacy-data"
@@ -70,9 +70,7 @@ def _write_legacy_v2_workspace(
     )
     record = legacy / "plans" / "plan-0001"
     record.mkdir(parents=True, exist_ok=True)
-    (record / "plan.yaml").write_text(
-        "id: plan-0001\ntype: plan\n", encoding="utf-8"
-    )
+    (record / "plan.yaml").write_text("id: plan-0001\ntype: plan\n", encoding="utf-8")
     return legacy
 
 

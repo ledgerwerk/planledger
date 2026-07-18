@@ -325,16 +325,16 @@ def test_done_accepts_complete_handoff_plan_cli(
 def test_min_resolved_required_questions_blocks_done_until_resolved(
     initialized_workspace: Path, invoke
 ) -> None:
+    from tests.conftest import configure_prompt_profile
     from tests.test_plan_status import _fill_required_components
 
-    config = initialized_workspace / ".ledger" / "planledger" / "config.toml"
-    config.write_text(
-        config.read_text(encoding="utf-8")
-        + "\n[prompt_profiles.planning_interview]\n"
-        + "enabled = true\n"
-        + 'activation = "always"\n'
-        + "min_resolved_required_questions_before_done = 1\n",
-        encoding="utf-8",
+    configure_prompt_profile(
+        initialized_workspace,
+        name="planning_workshop",
+        enabled=True,
+        activation="always",
+        required_question_topics=[],
+        min_resolved_required_questions_before_done=1,
     )
 
     invoke(

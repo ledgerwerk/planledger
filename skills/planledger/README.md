@@ -1,6 +1,6 @@
 # Planledger Agent Skill
 
-This skill teaches a coding harness how to use planledger as a workshop-first CLI for planning workshops and structured implementation handoffs.
+This skill teaches a coding harness how to use Planledger as a workshop-first CLI for planning workshops and structured implementation handoffs.
 
 ## Installation
 
@@ -19,9 +19,17 @@ cp -R ./skills/planledger ~/.agents/skills/planledger
 - exporting the rendered plan to the workspace root with `plan export`;
 - setting plan status to `done` only when guardrails pass and the human approves;
 - reporting plan id, version, status, rendered storage path, workspace export path, and validation result.
-- using local `plan-000X` ids for CLI work and `pl:plan-000X` when a plan
-  needs a global cross-ledger reference.
 
 ## Canonical storage
 
-Planledger uses Ledgercore's `sibling-ledger` provider. Authoritative data is always `<project-root>/../ledger/plan/planledger`, with the shared provider selection in `.ledger/ledger.local.toml`, stable config in `.ledger/plan/config.toml`, and a `.ledger-project.toml` binding. Legacy repository-local, arbitrary external, and namespaced layouts are migration inputs only.
+Ledgercore 0.5 schema-3 owns project discovery and storage resolution. Use
+`planledger --json status` or `planledger storage where` and treat the returned
+`config_path` and data `storage.path` as authoritative. Never calculate data
+paths manually or edit Planledger data directly.
+
+The normal manifest is `.ledger/ledger.toml`, the stable Planledger config is
+`.ledger/planledger/config.toml`, and the data mount uses `external`,
+`user-data`, or `project`. The default external target is
+`../ledger/planledger/<project-uuid>/data`. Use `planledger migrate` for
+schema-2 and legacy projects. `external` does not imply Git behavior. Rendered
+or exported Markdown remains the deliverable.

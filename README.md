@@ -247,10 +247,10 @@ schema_version = 3
 storage = "user-data"
 ```
 
-Planledger rejects arbitrary external roots, repository-local normal storage,
-`root` workspace overrides, and `LEDGER_WORKSPACE_ROOT`. Use `planledger
-migrate` to inspect legacy layouts and `planledger migrate apply` to move
-them safely.
+Planledger resolves relative, absolute, and supported home-relative external
+roots through Ledgercore. Use ``planledger --json status`` or ``planledger
+storage where`` for authoritative paths. Use ``planledger migrate`` to inspect
+legacy layouts and ``planledger migrate apply`` to move them safely.
 
 ## CLI surface
 

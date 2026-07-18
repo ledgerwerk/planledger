@@ -75,9 +75,7 @@ def test_status_json_exposes_prompt_profiles(
     assert "prompt_profiles" in r
     # Default canonical config ships the planning_workshop profile enabled.
     profiles = r["prompt_profiles"]
-    assert any(
-        profile["name"] == "planning_workshop" for profile in profiles
-    )
+    assert any(profile["name"] == "planning_workshop" for profile in profiles)
     # Status must not emit the deprecated storage vocabulary at the top level.
     for forbidden in (
         "workspace_provider",

@@ -11,15 +11,14 @@ kinds (``external``, ``user-data``, or ``project``).
    <project-root>/.ledger/ledger.local.toml         # machine-local, normally ignored
    <project-root>/.ledger/planledger/config.toml
    <project-root>/../ledger/.ledger-store.toml
-   <project-root>/../ledger/planledger/<project-uuid>/
+   <project-root>/../ledger/planledger/<project-uuid>/data/
      .ledger-project.toml
-     data/
-       storage.yaml
-       allocations/plans/
-       allocations/workshops/
-       plans/
-       workshops/
-       migrations/
+     storage.yaml
+     allocations/plans/
+     allocations/workshops/
+     plans/
+     workshops/
+     migrations/
 
 The shared manifest contains exactly one Planledger mount:
 
@@ -80,10 +79,10 @@ Workspace discovery
 
 Normal runtime discovery locates ``.ledger/ledger.toml``, validates the
 Planledger registration, optionally loads ``.ledger/ledger.local.toml``,
-and resolves the mount through Ledgercore. It rejects legacy locators,
-arbitrary external roots, ``LEDGER_WORKSPACE_ROOT``, missing markers,
-foreign bindings, and missing data. It does not use provider overrides
-or a fallback ``cache`` storage.
+and resolves the mount through Ledgercore. It rejects legacy locators, missing markers, foreign bindings, and missing
+data. Relative external roots are resolved against the project root; absolute
+and home-relative roots are resolved by Ledgercore. It does not use a fallback
+``cache`` storage.
 
 Migration
 ---------

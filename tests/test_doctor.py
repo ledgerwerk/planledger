@@ -22,8 +22,9 @@ def test_doctor_reports_old_schema_detection(
 
     assert result.exit_code == 0, result.stdout
     assert payload["result"]["healthy"] is False
+    assert payload["result"]["project_state"] == "canonical"
     assert any(
-        "old schema detected" in error.lower() for error in payload["result"]["errors"]
+        "schema detected" in error.lower() for error in payload["result"]["errors"]
     )
 
 
@@ -86,14 +87,14 @@ def test_doctor_reports_configured_external_paths_when_storage_missing(
 
     result, payload = invoke_json(root, "doctor")
 
-    expected_storage = tmp_path / "planledger-state" / "planledger" / "storage.yaml"
-    expected_plans = tmp_path / "planledger-state" / "planledger" / "plans"
     errors = payload["result"]["errors"]
     assert result.exit_code == 0, result.stdout
     assert payload["result"]["healthy"] is False
-    assert f"Missing storage file: {expected_storage}." in errors
-    assert f"Missing plans directory: {expected_plans}." in errors
-    assert not any(".planledger/storage.yaml" in error for error in errors)
+    assert payload["result"]["project_state"] == "legacy"
+    assert payload["result"]["migration_required"] is True
+    assert payload["result"]["legacy_config_path"] == str(config_path)
+    assert any("legacy_config_found" in error for error in errors)
+    assert payload["result"]["remediation"] == ["planledger migrate"]
 
 
 def test_status_reports_configured_external_paths_when_storage_missing(
@@ -113,11 +114,9 @@ def test_status_reports_configured_external_paths_when_storage_missing(
 
     result, payload = invoke_json(root, "status")
 
-    expected_dir = tmp_path / "planledger-state" / "planledger"
     assert result.exit_code == 0, result.stdout
-    assert payload["result"]["initialized"] is True
-    assert payload["result"]["storage_ready"] is False
-    assert payload["result"]["config_path"] == str(config_path)
-    assert payload["result"]["planledger_dir"] == str(expected_dir)
-    assert payload["result"]["storage_path"] == str(expected_dir / "storage.yaml")
-    assert payload["result"]["health"]["healthy"] is False
+    assert payload["result"]["initialized"] is False
+    assert payload["result"]["project_state"] == "legacy"
+    assert payload["result"]["migration_required"] is True
+    assert payload["result"]["legacy_config_path"] == str(config_path)
+    assert payload["result"]["next_command"] == "planledger migrate"

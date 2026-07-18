@@ -1,56 +1,49 @@
 CLI reference
 =============
 
-Planledger exposes a single ``planledger`` command with subcommands grouped by
-resource.
+Planledger exposes one ``planledger`` command with resource subcommands.
 
-Project setup
--------------
+Project setup and inspection
+----------------------------
 
 .. code-block:: text
 
-   planledger init [--project-name NAME] [--create-sibling-store]
-   planledger migrate [--source PATH] [--sibling-ledger-root PATH]
-   planledger migrate apply [--source PATH] [--sibling-ledger-root PATH] [--dry-run] [--create-sibling-store] [--backup-dir PATH] [--retire-source | --retire-legacy]
-   planledger status [--json]
-   planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
-   planledger doctor [--json]
+   planledger init [--project-name NAME] [--data-storage external|user-data|project] [--external-root PATH] [--create-external-store]
+   planledger migrate [--source PATH] [--data-storage external|user-data|project] [--external-root PATH]
+   planledger migrate apply [--source PATH] [--mode copy|move] [--data-storage KIND] [--external-root PATH] [--local-storage-override] [--backup-dir PATH] [--adopt-external-store]
+   planledger status [--check]
+   planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components]
+   planledger doctor
 
-``planledger info`` prints a read-only inventory of the canonical sibling
-workspace: provider, UUID-scoped data path, binding, schema-4 state, derived IDs,
-the active plan/workshop, records, rendered artifacts, and disk size. It never
-writes or migrates storage. ``planledger status`` is the quick health/counts
-view, and ``planledger doctor`` checks the same invariants read-only.
-
-Use ``planledger status`` for a quick health/counts snapshot plus the active
-plan; use ``planledger info`` for the full stored inventory and per-component
-fill-state.
+``status``, ``info``, ``doctor``, and ``storage where`` are read-only. They use
+one project inspection path and report canonical, legacy, partial, malformed,
+and migration-required states without activating legacy configuration.
 
 .. code-block:: bash
 
-   planledger info                       # full human inventory
-   planledger --json info                # machine-readable inventory envelope
-   planledger info --plan plan-0001      # full detail for one plan
-   planledger info --workshop workshop-0001
-   planledger info --paths-only          # only the resolved paths
-   planledger info --no-components       # drop per-component fill-state
+   planledger --json status
+   planledger storage where
+   planledger storage validate
+   planledger storage set external --root ../ledger --local-storage-override
+   planledger storage set user-data --local-storage-override
+   planledger storage set project --project
+   planledger storage clear-override
+   planledger storage migration-status
+   planledger storage recover
 
-``--plan``/``--workshop`` accept a local id (``plan-0001``), global ref
-(``pl:plan-0001``), or file alias (``pl-plan-0001``).
+The storage object uses ``mount``, ``kind``, ``source``, ``external_root``,
+``path``, ``binding_path``, and ``binding_status``. The returned paths are the
+authoritative paths and must not be reconstructed by clients.
 
 Plan management
 ---------------
 
-Plan selectors accept local ids (``plan-0001``), canonical global refs
-(``pl:plan-0001``), file aliases (``pl-plan-0001``), and uppercase file aliases.
-Output always uses lowercase canonical refs. Foreign refs such as
-``tl:task-0001`` are rejected.
-
 .. code-block:: text
 
    planledger plan create --title TITLE [--request TEXT | --request-file PATH | --stdin] [--status new|in_progress]
-   planledger plan list [--status STATUS] [--json]
-   planledger plan show PLAN_ID [--component KEY] [--rendered] [--json]
+   planledger plan list [--status STATUS]
+   planledger plan show PLAN_ID [--component KEY] [--rendered]
+   planledger plan activate PLAN_ID
    planledger plan status STATUS [PLAN_ID] [--plan PLAN_ID] --reason TEXT
    planledger plan cancel PLAN_ID --reason TEXT
 
@@ -59,7 +52,7 @@ Component editing
 
 .. code-block:: text
 
-   planledger plan component list PLAN_ID [--json]
+   planledger plan component list PLAN_ID
    planledger plan component show PLAN_ID COMPONENT
    planledger plan component set PLAN_ID COMPONENT (--text TEXT | --file PATH | --stdin) [--reason TEXT]
    planledger plan component append PLAN_ID COMPONENT (--text TEXT | --file PATH | --stdin) [--reason TEXT]
@@ -69,66 +62,29 @@ Build, validate, and version
 
 .. code-block:: text
 
-   planledger plan build PLAN_ID [--out PATH] [--print] [--include-empty] [--json]
-   planledger plan export [PLAN_ID] [--plan PLAN_ID] [--out PATH] [--include-empty] [--json]
-   planledger plan validate PLAN_ID [--json]
-   planledger plan versions PLAN_ID [--json]
+   planledger plan build PLAN_ID [--out PATH] [--print] [--include-empty]
+   planledger plan export [PLAN_ID] [--plan PLAN_ID] [--out PATH] [--include-empty]
+   planledger plan validate PLAN_ID
+   planledger plan versions PLAN_ID
    planledger plan diff PLAN_ID --from v0001 --to v0002
 
-Structured bundles
-------------------
-
-Agents can create or update plans through ``planledger.structured_plan.v1``
-bundles:
+Structured bundles use ``planledger.structured_plan.v1``:
 
 .. code-block:: text
 
    planledger plan apply --file PATH_OR_DASH [--dry-run]
 
-For update bundles, ``plan_id`` accepts either a local id or a Planledger ref.
-The schema and field name remain unchanged.
+Workshop commands use the corresponding ``workshop`` and
+``workshop component`` subcommands. Plan selectors accept local ids such as
+``plan-0001``, canonical refs such as ``pl:plan-0001``, and file aliases.
 
-Stdin input
-------------
+Prompt profile
+--------------
 
-Component commands and ``plan create`` accept ``--stdin`` and ``--file -`` for
-multiline input without temporary files:
-
-.. code-block:: bash
-
-   cat <<'MD' | planledger plan component set context --stdin --reason "Record evidence."
-   Repository evidence...
-   MD
-
-   cat <<'JSON' | planledger plan apply --file -
-   { "schema": "planledger.structured_plan.v1", ... }
-   JSON
-
-Export
-------
-
-``planledger plan export`` writes the rendered Markdown to a workspace-root-relative
-path (default ``WORKSPACE_ROOT/PLAN_ID.md``). The canonical storage path is
-``../ledger/planledger/<project_uuid>``; exports are explicit workspace artifacts.
-
-.. code-block:: bash
-
-   planledger plan export --plan plan-0004
-   planledger plan export --plan plan-0004
-   # writes: ./plan-0004.md
-
-Planning interview profile
---------------------------
-
-Planledger ships an optional prompt profile named ``planning_workshop``.
-When enabled, the existing Planledger skill (the single
-``skills/planledger/SKILL.md``) asks the user one plan-quality question at a
-time, includes a recommended answer, inspects the repository first when
-possible, records required questions in ``open_questions``, and stops after
-each question. The CLI only parses, persists, and exposes the policy; it does
-not interview the user itself.
-
-Configure the prompt profile in the stable project config ``.ledger/plan/config.toml``:
+Planledger ships the canonical ``planning_workshop`` profile. The deprecated
+``planning_interview`` name remains an isolated compatibility alias and never
+overrides an existing canonical table. Configure the canonical profile in
+``.ledger/planledger/config.toml``:
 
 .. code-block:: toml
 
@@ -140,34 +96,19 @@ Configure the prompt profile in the stable project config ``.ledger/plan/config.
    include_recommended_answer = true
    max_required_questions = 20
    min_resolved_required_questions_before_done = 0
-   trigger_phrases = ["shape", "shape this feature", "shape this feature"]
    required_question_topics = ["scope", "tests", "rollback", "risks"]
 
-With the profile active, the profile metadata and an agent instruction appear
-in the machine-readable steering command:
-
-.. code-block:: text
-
-   planledger status --json            # result.prompt_profiles lists the profile
-   planledger --json next-action      # result.prompt_profile + result.agent_instruction
-
-``next_item`` is one of:
-
-- ``ask_plan_question`` when the profile is active and no required component is empty.
-- ``answer_required_question`` when ``open_questions`` already holds an unresolved
-  ``- [ ] REQUIRED:`` line (only the first such question is surfaced).
-
-The phrase ``shape this feature`` is supported only as a trigger phrase for
-``activation = "triggered"``; ``planning_workshop`` is the canonical feature
-name. The profile does not create planning-workshop records, does not replace
-``open_questions``, and does not change Planledger's workshop-first, plan-second scope.
+The CLI parses and exposes the policy. The Planledger skill asks questions and
+records them in ``open_questions``.
 
 Storage contract
 ----------------
-Planledger data is resolved through ``sibling-ledger`` below the project-scoped
-mount ``planledger/<project_uuid>``. The default sibling root is ``../ledger``,
-but migration accepts ``--sibling-ledger-root PATH`` and writes below
-``PATH/planledger/<project_uuid>``. The base sibling root must contain a
-regular ``.ledger-store`` marker and each project data root must contain a matching
-binding. Multiple projects can share one base root because their UUID directories
-are isolated. Legacy paths are handled only by the migration commands.
+
+Ledgercore 0.5 owns schema-3 discovery, manifest parsing, bindings, external
+markers, and resolved paths. Planledger uses the single ``data`` mount with
+``external``, ``user-data``, or ``project`` storage. The default external root
+is ``../ledger`` and the default data path is
+``../ledger/planledger/<project-uuid>/data``. Legacy layouts and
+``.planledger.toml`` are migration inputs only. Use ``planledger migrate`` and
+``planledger migrate apply`` for them. No normal-runtime command uses provider
+terminology or performs Git operations.

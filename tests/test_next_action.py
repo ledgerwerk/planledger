@@ -236,15 +236,21 @@ def test_next_action_is_read_only(initialized_workspace: Path, invoke) -> None:
 
 
 def _enable_planning_interview(
-    workspace: Path, *, activation: str = "always", phrases: list[str] | None = None
+    workspace: Path,
+    *,
+    activation: str = "always",
+    phrases: list[str] | None = None,
+    topics: list[str] | None = None,
 ) -> None:
-    config = workspace / ".ledger" / "planledger" / "config.toml"
-    block = "\n[prompt_profiles.planning_interview]\nenabled = true\n"
-    block += f'activation = "{activation}"\n'
-    if phrases is not None:
-        joined = ", ".join(f'"{p}"' for p in phrases)
-        block += f"trigger_phrases = [{joined}]\n"
-    config.write_text(config.read_text(encoding="utf-8") + block, encoding="utf-8")
+    from tests.conftest import configure_prompt_profile
+
+    configure_prompt_profile(
+        workspace,
+        name="planning_workshop",
+        activation=activation,
+        trigger_phrases=phrases,
+        required_question_topics=topics,
+    )
 
 
 def test_next_action_ask_plan_question_when_profile_active(
@@ -282,7 +288,7 @@ def test_next_action_ask_plan_question_when_profile_active(
     assert payload["result"]["next_item"] == "ask_plan_question"
     assert payload["result"]["plan_id"] == "plan-0001"
     profile = payload["result"]["prompt_profile"]
-    assert profile["name"] == "planning_interview"
+    assert profile["name"] == "planning_workshop"
     assert profile["enabled"] is True
     assert profile["active"] is True
     assert "agent_instruction" in payload["result"]
@@ -385,19 +391,17 @@ def _enable_planning_workshop_with_topics(
     min_resolved: int = 0,
     max_required: int = 20,
 ) -> None:
-    config = workspace / ".ledger" / "planledger" / "config.toml"
-    block = (
-        "\n[prompt_profiles.planning_workshop]\n"
-        "enabled = true\n"
-        'activation = "always"\n'
-        'question_policy = "ask_one_at_a_time"\n'
-        f"min_resolved_required_questions_before_done = {min_resolved}\n"
-        f"max_required_questions = {max_required}\n"
+    from tests.conftest import configure_prompt_profile
+
+    configure_prompt_profile(
+        workspace,
+        name="planning_workshop",
+        activation="always",
+        required_question_topics=topics,
+        min_resolved_required_questions_before_done=min_resolved,
+        max_required_questions=max_required,
+        question_policy="ask_one_at_a_time",
     )
-    if topics is not None:
-        joined = ", ".join(f'"{t}"' for t in topics)
-        block += f"required_question_topics = [{joined}]\n"
-    config.write_text(config.read_text(encoding="utf-8") + block, encoding="utf-8")
 
 
 def test_next_action_surfaces_first_required_topic_question(
@@ -522,8 +526,8 @@ def test_next_action_topic_queue_beats_generic_ask(
 
     from tests.test_plan_status import _fill_required_components
 
-    # planning_interview alias with no topics -> generic ask.
-    _enable_planning_interview(initialized_workspace)
+    # The canonical profile explicitly disables topic prompts for this test.
+    _enable_planning_interview(initialized_workspace, topics=[])
     invoke(
         initialized_workspace,
         "plan",

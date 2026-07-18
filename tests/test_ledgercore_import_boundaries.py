@@ -61,7 +61,9 @@ def test_planledger_modules_use_only_allowed_ledgercore_imports(path: Path) -> N
     source = path.read_text(encoding="utf-8")
     if "from ledgercore" not in source and "import ledgercore" not in source:
         return
-    imports = re.findall(r"^(?:from|import)\s+(ledgercore\S*)", source, flags=re.MULTILINE)
+    imports = re.findall(
+        r"^(?:from|import)\s+(ledgercore\S*)", source, flags=re.MULTILINE
+    )
     for name in imports:
         if name == "ledgercore":
             continue
@@ -69,7 +71,8 @@ def test_planledger_modules_use_only_allowed_ledgercore_imports(path: Path) -> N
         if top and f"ledgercore.{top}" in GENERIC_LEDGERCORE_SUBPACKAGES:
             continue
         pytest.fail(
-            f"{relative}: direct Ledgercore import {name!r} outside the adapter or generic utilities"
+            f"{relative}: direct Ledgercore import {name!r} outside the "
+            "adapter or generic utilities"
         )
 
 
@@ -81,7 +84,9 @@ def test_test_modules_can_import_ledgercore(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
     if "from ledgercore" not in source and "import ledgercore" not in source:
         return
-    imports = re.findall(r"^(?:from|import)\s+(ledgercore\S*)", source, flags=re.MULTILINE)
+    imports = re.findall(
+        r"^(?:from|import)\s+(ledgercore\S*)", source, flags=re.MULTILINE
+    )
     for name in imports:
         if name == "ledgercore":
             continue

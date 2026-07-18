@@ -4,40 +4,23 @@ Architecture
 Ownership boundary
 ------------------
 
-Ledgercore 0.5 owns the cross-cutting Ledger mechanics:
+Ledgercore 0.5 owns cross-cutting Ledger mechanics:
 
-- canonical Ledger project discovery
-- schema-2 and schema-3 manifest parsing and writing
-- optional ``ledger.local.toml`` parsing, overlay, mutation, and cleanup
-- canonical config-path derivation
-- mount-path derivation
-- external-store root markers
-- config and mount ``.ledger-project.toml`` binding markers
-- generic migration planning
-- safe copy/move staging
-- hashing and verification
-- configuration activation
-- migration journals, recovery, and rollback
+- canonical project discovery;
+- schema-2 and schema-3 manifest parsing and writing;
+- local override overlays;
+- config and mount path derivation;
+- external-store markers and binding markers;
+- generic migration planning, staging, verification, journals, and recovery.
 
-Planledger owns the plan/workshop domain behavior:
+Planledger owns the required ``data`` mount, Planledger configuration,
+``storage.yaml`` schema 4, plan and workshop records, active state, ID
+allocation and tombstones, legacy source discovery, domain migration, CLI
+presentation, write guards, and the skill/documentation contract.
 
-- the required ``data`` mount
-- data storage kind validation (``project``, ``external``, or ``user-data``)
-- the Planledger config schema
-- ``storage.yaml`` schema 4
-- plan and workshop record formats
-- active plan and active workshop state
-- plan/workshop ID inventory and reservation
-- legacy counter conversion to tombstones
-- Planledger-specific legacy source discovery
-- Planledger-specific domain migration and post-migration validation
-- CLI/API presentation
-- the Planledger write guard
-- the skill and documentation contract
-
-The only module that imports detailed Ledgercore storage, TOML, binding,
-layout, or migration APIs is ``planledger/ledgercore_backend.py``. Domain
-modules import only this adapter.
+The only detailed Ledgercore integration point is
+``planledger/ledgercore_backend.py``. Domain modules use this adapter rather
+than importing Ledgercore storage, TOML, binding, layout, or migration APIs.
 
 Package structure
 -----------------
@@ -45,49 +28,50 @@ Package structure
 .. code-block:: text
 
    planledger/
-   ├── __init__.py
-   ├── _version.py
-   ├── launcher.py         # Console script entry point
-   ├── cli.py              # Typer CLI application
-   ├── cli_storage.py      # ``storage`` command group
-   ├── cli_writes.py       # write-guard wiring for mutating commands
-   ├── models.py           # Data classes for Plan, Workspace, ComponentSpec
-   ├── storage.py          # Domain record and allocation behavior
-   ├── initialization.py   # Schema-3 init flow (canonical init)
-   ├── project_context.py  # Ledgercore project and mount resolution
-   ├── project_binding.py  # Legacy compatibility binding reader
-   ├── ledgercore_backend.py  # Sole Ledgercore integration point
-   ├── legacy_layout.py    # Planledger-only legacy source discovery
-   ├── domain_migration.py # State, counter, and tombstone transformations
-   ├── migration.py        # Read-only inspect and verified migration
-   ├── write_lock.py       # Planledger exclusive write guard
-   ├── id_inventory.py     # Strict derived allocations
-   ├── render.py           # Markdown rendering engine
-   ├── guardrails.py       # Handoff quality validation
-   ├── bundle.py           # Structured plan bundle loader and applier
-   ├── errors.py           # PlanledgerError exception
-   ├── prompt_profiles.py  # ``prompt_profiles`` config parsing
-   └── py.typed            # PEP 561 marker
+   ├── cli.py                 # Typer CLI application
+   ├── cli_writes.py          # write-guard wiring
+   ├── models.py              # domain data classes
+   ├── persistence.py         # Planledger persistence wrappers
+   ├── project_context.py     # inspection, workspace, and state classification
+   ├── ledgercore_backend.py  # sole detailed Ledgercore adapter
+   ├── initialization.py      # canonical schema-3 initialization
+   ├── storage.py             # compatibility facade and domain operations
+   ├── record_store.py        # shared record path/version mechanics
+   ├── plan_store.py          # plan storage facade
+   ├── workshop_store.py      # workshop storage facade
+   ├── diagnostics.py         # read-only diagnostics facade
+   ├── inventory.py           # read-only inventory facade
+   ├── next_action.py         # next-action facade
+   ├── legacy_layout.py       # legacy source discovery
+   ├── domain_migration.py    # state and tombstone transformations
+   ├── migration.py           # migration inspection and orchestration
+   ├── write_lock.py          # exclusive Planledger write guard
+   ├── id_inventory.py        # derived ID allocation
+   ├── render.py              # Markdown rendering
+   ├── guardrails.py          # handoff validation
+   ├── bundle.py              # structured bundle handling
+   ├── prompt_profiles.py     # prompt profile parsing
+   └── errors.py              # structured PlanledgerError
 
 Data flow
 ---------
 
-1. **CLI** parses arguments and resolves the canonical project context
-   through ``project_context.load_workspace`` and Ledgercore.
-2. **Project context** validates the shared manifest, the optional
-   local overlay, the mount binding, and the schema-4 state.
-3. **Storage** reads and writes component files and plan metadata
-   inside the resolved data root.
-4. **Render** assembles components into a single Markdown document
-   with YAML front matter.
-5. **Guardrails** inspects the rendered output to enforce done criteria.
-6. **Bundle** loads a JSON bundle and applies mutations through storage.
+1. The CLI resolves a root and asks ``project_context.inspect_project_context``
+   for the project state.
+2. Canonical contexts use ``ledgercore_backend`` and Ledgercore's resolved
+   layout and mounts.
+3. Storage facades read and write component files below the resolved data root.
+4. Render assembles components into standalone Markdown.
+5. Guardrails enforce done criteria.
+6. Migration uses Ledgercore staging and verification plus Planledger domain
+   transformations.
 
 Error handling
 --------------
 
-All business errors raise ``PlanledgerError`` with a structured ``code``,
-``message``, optional ``remediation`` list, and ``details`` mapping. The
-CLI catches these and exits with the specified ``exit_code``. Errors
-wrapping a Ledgercore failure preserve ``ledgercore_code`` and
-``ledgercore_error_type`` in ``details``.
+Business errors raise ``PlanledgerError`` with a structured code, message,
+remediation list, and details mapping. Ledgercore failures preserve the
+Ledgercore code and exception type. Read-only commands distinguish legacy,
+partial, malformed, missing, and invalid states instead of returning a generic
+uninitialized result. Mutating commands require a canonical workspace and fail
+closed.

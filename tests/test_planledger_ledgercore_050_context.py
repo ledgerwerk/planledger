@@ -29,14 +29,11 @@ def _write_v3(
     ledger_dir = project / ".ledger"
     ledger_dir.mkdir()
     if registration:
-        ledgers = (
-            "[ledgers.planledger.mounts.data]\n"
-            f"storage = \"{storage}\"\n"
-        )
+        ledgers = f'[ledgers.planledger.mounts.data]\nstorage = "{storage}"\n'
         if storage == "external":
-            ledgers += f"root = \"{external_root}\"\n"
+            ledgers += f'root = "{external_root}"\n'
     else:
-        ledgers = "[ledgers.other.mounts.data]\nstorage = \"project\"\n"
+        ledgers = '[ledgers.other.mounts.data]\nstorage = "project"\n'
     config_dir = ledger_dir / "planledger"
     config_dir.mkdir()
     manifest_text = (
@@ -46,7 +43,7 @@ def _write_v3(
     )
     (ledger_dir / "ledger.toml").write_text(manifest_text, encoding="utf-8")
     (config_dir / "config.toml").write_text(
-        "[ledger]\ncode = \"pl\"\nname = \"planledger\"\n",
+        '[ledger]\ncode = "pl"\nname = "planledger"\n',
         encoding="utf-8",
     )
     from planledger.ledgercore_backend import (
@@ -68,7 +65,7 @@ def project_with_external(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     external_root = (project / ".." / "ledger").resolve()
     external_root.mkdir()
-    uuid = _write_v3(project, storage="external", external_root="../ledger")
+    _write_v3(project, storage="external", external_root="../ledger")
     from planledger.ledgercore_backend import initialize_planledger_external_store
 
     initialize_planledger_external_store(external_root, legacy_compatible=True)
@@ -78,14 +75,14 @@ def project_with_external(tmp_path: Path) -> Path:
 @pytest.fixture
 def project_with_user_data(tmp_path: Path) -> Path:
     project = tmp_path / "project"
-    uuid = _write_v3(project, storage="user-data")
+    _write_v3(project, storage="user-data")
     return project
 
 
 @pytest.fixture
 def project_with_project_storage(tmp_path: Path) -> Path:
     project = tmp_path / "project"
-    uuid = _write_v3(project, storage="project")
+    _write_v3(project, storage="project")
     return project
 
 
@@ -108,7 +105,7 @@ def test_project_storage_loads(project_with_project_storage: Path) -> None:
 
 def test_config_path_uses_planledger_dir(tmp_path: Path) -> None:
     project = tmp_path / "project"
-    uuid = _write_v3(project, storage="project")
+    _write_v3(project, storage="project")
     workspace = load_workspace(project, require_initialized=False)
     assert workspace.config_path.name == "config.toml"
     assert workspace.config_path.parent.name == "planledger"
@@ -157,3 +154,50 @@ def test_status_json_for_schema3(tmp_path: Path, runner=None) -> None:
 def test_classify_canonical_schema3(project_with_external: Path) -> None:
     state = classify_project_state(project_with_external)
     assert state.kind in {"canonical", "partial", "data_missing"}
+
+
+@pytest.mark.parametrize("root_kind", ["relative", "absolute", "home"])
+def test_external_root_is_resolved_from_project_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_kind: str,
+) -> None:
+    project = tmp_path / "project"
+    if root_kind == "relative":
+        root_value = "custom-ledger"
+        external_root = project / root_value
+    elif root_kind == "absolute":
+        external_root = tmp_path / "absolute-ledger"
+        root_value = "../absolute-ledger"
+    else:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        root_value = "~/home-ledger"
+        external_root = home / "home-ledger"
+    _write_v3(project, storage="external", external_root=root_value)
+    external_root.mkdir(parents=True)
+    from planledger.ledgercore_backend import (
+        initialize_planledger_external_store,
+        resolve_planledger_external_root,
+    )
+
+    initialize_planledger_external_store(external_root)
+    assert (
+        resolve_planledger_external_root(external_root, project_root=project)
+        == external_root.resolve()
+    )
+
+    nested = project / "nested"
+    nested.mkdir()
+    runner_cwd = tmp_path / "runner"
+    runner_cwd.mkdir()
+    monkeypatch.chdir(runner_cwd)
+    from_project = load_workspace(project, require_initialized=False)
+    from_nested = load_workspace(nested, require_initialized=False)
+
+    assert from_project.external_root == external_root.resolve()
+    assert from_nested.external_root == from_project.external_root
+    assert from_project.external_root.is_absolute()
+    assert from_project.store_marker_path is not None
+    assert from_project.store_marker_path.is_absolute()

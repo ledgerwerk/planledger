@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 if sys.platform != "win32":
     import fcntl
@@ -135,7 +136,9 @@ def inspect_write_lock(
         path=path,
         held=True,
         pid=pid,
-        command=document.get("command") if isinstance(document.get("command"), str) else None,
+        command=document.get("command")
+        if isinstance(document.get("command"), str)
+        else None,
         claimed_at=claimed_iso,
         project_uuid=document.get("project_uuid")
         if isinstance(document.get("project_uuid"), str)
@@ -181,7 +184,7 @@ def acquire_planledger_write_lock(
             unlink_write_lock(project_root, require_pids=(current.pid,))
     path = write_lock_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, Any] = {
         "pid": os.getpid(),
         "hostname": socket.gethostname(),
         "command": command,

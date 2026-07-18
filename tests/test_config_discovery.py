@@ -33,11 +33,11 @@ def _make_schema3_project(project: Path, external_root: Path) -> str:
     config_dir = ledger_dir / "planledger"
     config_dir.mkdir()
     (config_dir / "config.toml").write_text(
-        "[ledger]\ncode = \"pl\"\nname = \"planledger\"\n",
+        '[ledger]\ncode = "pl"\nname = "planledger"\n',
         encoding="utf-8",
     )
     (ledger_dir / "ledger.toml").write_text(
-        'schema_version = 3\n'
+        "schema_version = 3\n"
         '[project]\nuuid = "00000000-0000-4000-8000-000000000007"\n'
         'name = "demo"\n'
         '[ledgers.planledger.mounts.data]\nstorage = "external"\n'
@@ -97,9 +97,7 @@ def test_status_reports_canonical_paths_from_nested_directory(
     project.mkdir()
     sibling = project.parent / "ledger"
     sibling.mkdir()
-    _invoke(
-        project, "init", "--project-name", "demo", "--create-external-store"
-    )
+    _invoke(project, "init", "--project-name", "demo", "--create-external-store")
     nested = project / "src"
     nested.mkdir()
     result = _invoke(nested, "--json", "status")

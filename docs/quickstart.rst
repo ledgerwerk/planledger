@@ -1,24 +1,23 @@
 Quick start
 ===========
 
-The CLI is the only supported mutation path. The rendered Markdown artifact is the
-deliverable.
+The CLI is the only supported mutation path. The rendered Markdown artifact is
+the deliverable.
 
 .. code-block:: bash
 
-   # Check workspace state
+   # Check workspace state and resolved paths
    planledger --json status
+   planledger storage where
 
-   # Initialize after provisioning ../ledger/.ledger-store
-   planledger init
-   # Or explicitly create the sibling store
-   planledger init --create-sibling-store
+   # Initialize with the default external target ../ledger
+   planledger init --project-name "Demo" --create-external-store
 
    # Create a new independent plan
    planledger plan create --title "Add feature A" \
        --request "Please review how we can add feature A."
 
-   # Set each component from a file
+   # Set components from files
    planledger plan component set plan-0001 context --file context.md
    planledger plan component set plan-0001 approach --file approach.md
    planledger plan component set plan-0001 todo_items --file todos.md
@@ -26,26 +25,23 @@ deliverable.
    planledger plan component set plan-0001 validation --file validation.md
    planledger plan component set plan-0001 risks --file risks.md
 
-   # Build and validate
+   # Build, validate, and complete the handoff
    planledger plan build plan-0001
    planledger plan validate plan-0001
-
-   # Mark the plan done
    planledger plan status plan-0001 done --reason "Ready for coding agent handoff."
 
-After ``done``, the rendered Markdown artifact lives under the canonical sibling
-store at ``../ledger/planledger/<project-uuid>/plans/plan-0001/rendered/``.
+After ``done``, the rendered Markdown artifact is stored below
+``../ledger/planledger/<project-uuid>/data/plans/plan-0001/rendered/``.
 
-Export the rendered plan to the workspace root so the coding harness can read it:
+Export the rendered plan to the workspace root:
 
 .. code-block:: bash
 
-   # Writes ./plan-0001.md in the workspace root
    planledger plan export
 
-New planning request equals new independent plan unless the user names an existing
-``plan-000X``. The ``done`` status means the handoff artifact is structurally ready,
-not that implementation has been completed.
+A new planning request creates a new independent plan unless the user names an
+existing ``plan-000X``. The ``done`` status means the handoff artifact is
+structurally ready, not that implementation has completed.
 
-Legacy layouts are migration inputs only. Inspect them with ``planledger migrate``;
-apply a reviewed migration with ``planledger migrate apply``.
+Legacy layouts are migration inputs only. Inspect them with ``planledger migrate``
+and apply a reviewed migration with ``planledger migrate apply``.

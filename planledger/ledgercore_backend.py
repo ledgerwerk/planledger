@@ -18,6 +18,8 @@ from ledgercore.config import LedgerProjectLocator
 from ledgercore.errors import (
     LedgerConfigError,
     LedgerCoreError,
+    StorageBindingError,
+    StorageMigrationError,
     TomlConfigError,
 )
 from ledgercore.layout import (
@@ -26,7 +28,6 @@ from ledgercore.layout import (
 )
 from ledgercore.manifest import (
     EffectiveLedgerRegistration,
-    EffectiveMount,
     LedgerLocalOverrides,
     LedgerProjectManifest,
     LoadedLedgerProject,
@@ -101,16 +102,18 @@ class PlanledgerLedgerLayout:
 
 
 def _map_error(exc: LedgerCoreError) -> PlanledgerError:
-    code = f"PLANLEDGER_LEDGER_{exc.__class__.__name__.upper()}"
-    default_messages = {
-        "PLANLEDGER_LEDGER_TOMLCONFIGERROR": "PLANLEDGER_LEDGER_TOML_INVALID",
-        "PLANLEDGER_LEDGER_LEDGERCONFIGERROR": "PLANLEDGER_LEDGER_PROJECT_INVALID",
-        "PLANLEDGER_LEDGER_LEDGERLAYOUTERROR": "PLANLEDGER_LEDGER_PROJECT_INVALID",
-        "PLANLEDGER_LEDGER_STORAGEBINDINGERROR": "PLANLEDGER_DATA_BINDING_INVALID",
-        "PLANLEDGER_LEDGER_STORAGEMIGRATIONERROR": "PLANLEDGER_STORAGE_MIGRATION_BLOCKED",
-    }
+    if isinstance(exc, TomlConfigError):
+        code = "PLANLEDGER_LEDGER_TOML_INVALID"
+    elif isinstance(exc, StorageBindingError):
+        code = "PLANLEDGER_DATA_BINDING_INVALID"
+    elif isinstance(exc, StorageMigrationError):
+        code = "PLANLEDGER_STORAGE_MIGRATION_BLOCKED"
+    elif isinstance(exc, LedgerConfigError):
+        code = "PLANLEDGER_LEDGER_PROJECT_INVALID"
+    else:
+        code = f"PLANLEDGER_LEDGER_{type(exc).__name__.upper()}"
     return PlanledgerError(
-        default_messages.get(code, code),
+        code,
         str(exc),
         remediation=[],
         details={
@@ -155,29 +158,11 @@ def _require_planledger_registration(
     if set(registration.mounts) != PLANLEDGER_REQUIRED_MOUNTS:
         raise PlanledgerError(
             "PLANLEDGER_REGISTRATION_INVALID",
-            f"Planledger must define exactly {sorted(PLANLEDGER_REQUIRED_MOUNTS)} mounts, "
+            "Planledger must define exactly "
+            f"{sorted(PLANLEDGER_REQUIRED_MOUNTS)} mounts, "
             f"got {sorted(registration.mounts)}.",
         )
     return registration
-
-
-def _resolve_planledger_storage(
-    registration: EffectiveLedgerRegistration,
-) -> tuple[_DataStorage, _StorageSource, Path | None]:
-    mount: EffectiveMount = registration.mounts[DATA_MOUNT]
-    storage = cast(_DataStorage, mount.storage)
-    if storage == "cache":
-        raise PlanledgerError(
-            "PLANLEDGER_STORAGE_TARGET_INVALID",
-            "Planledger data mount must not use cache storage.",
-        )
-    if storage not in PLANLEDGER_ALLOWED_KINDS:
-        raise PlanledgerError(
-            "PLANLEDGER_STORAGE_TARGET_INVALID",
-            f"Planledger data mount storage {storage!r} is not supported.",
-            details={"allowed": list(PLANLEDGER_ALLOWED_KINDS)},
-        )
-    return storage, cast(_StorageSource, mount.source), Path(mount.external_root) if mount.external_root else None
 
 
 def _resolve_layout_from_project(
@@ -238,12 +223,24 @@ def load_planledger_ledger_layout(
             "Ledger manifest is not schema 3; run planledger migrate.",
             remediation=["Run: planledger migrate"],
         )
-    registration = _require_planledger_registration(project)
-    data_storage, storage_source, external_root = _resolve_planledger_storage(
-        registration
-    )
+    _require_planledger_registration(project)
     layout = _resolve_layout_from_project(project)
     _ensure_cache_storage_rejected(layout)
+    data_mount = layout.mounts.get(DATA_MOUNT)
+    if data_mount is None:
+        raise PlanledgerError(
+            "PLANLEDGER_MOUNT_INVALID",
+            "Resolved Planledger layout must contain the data mount.",
+        )
+    data_storage = cast(_DataStorage, data_mount.storage)
+    storage_source = cast(_StorageSource, data_mount.source)
+    external_root = data_mount.root if data_storage == "external" else None
+    if external_root is not None and not external_root.is_absolute():
+        raise PlanledgerError(
+            "PLANLEDGER_STORAGE_TARGET_INVALID",
+            "Ledgercore returned a non-absolute external root.",
+            details={"path": str(external_root)},
+        )
     report = _validate_layout_storage(layout) if validate_storage else None
     return PlanledgerLedgerLayout(
         locator=project.locator,
@@ -269,9 +266,7 @@ def ensure_planledger_registration(
             "PLANLEDGER_STORAGE_TARGET_INVALID",
             "External storage requires an external_root value.",
         )
-    manifest_path = (
-        project_root.resolve(strict=False) / ".ledger" / "ledger.toml"
-    )
+    manifest_path = project_root.resolve(strict=False) / ".ledger" / "ledger.toml"
     if manifest_path.is_file():
         manifest = read_ledger_manifest(manifest_path)
     else:
@@ -286,7 +281,6 @@ def ensure_planledger_registration(
         storage=data_storage,
         external_root=external_root if data_storage == "external" else None,
     )
-    new_registration: LedgerLocalOverrides | None = None
     from ledgercore.manifest import LedgerRegistration
 
     ledgers = dict(manifest.ledgers)
@@ -318,11 +312,11 @@ def write_planledger_manifest(
     *,
     preserve_comments: bool = True,
 ) -> None:
-    manifest_path = (
-        project_root.resolve(strict=False) / ".ledger" / "ledger.toml"
-    )
+    manifest_path = project_root.resolve(strict=False) / ".ledger" / "ledger.toml"
     try:
-        write_ledger_manifest(manifest_path, manifest, preserve_comments=preserve_comments)
+        write_ledger_manifest(
+            manifest_path, manifest, preserve_comments=preserve_comments
+        )
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
 
@@ -341,18 +335,9 @@ def initialize_planledger_locations(
         except LedgerCoreError as exc:
             raise _map_error(exc) from exc
     if initialize_data and DATA_MOUNT in layout.resolved_layout.mounts:
-        from types import SimpleNamespace
-
         resolved = layout.resolved_layout.mounts[DATA_MOUNT]
-        component = SimpleNamespace(
-            path=resolved.path,
-            project_uuid=resolved.project_uuid,
-            tool=resolved.tool,
-            name=resolved.name,
-            storage=resolved.storage,
-        )
         try:
-            data_binding = initialize_storage_binding(component, require_empty=True)
+            data_binding = initialize_storage_binding(resolved, require_empty=True)
         except LedgerCoreError as exc:
             raise _map_error(exc) from exc
     return config_binding, data_binding
@@ -451,7 +436,7 @@ def initialize_planledger_external_store(
     legacy_compatible: bool = False,
 ) -> Path:
     try:
-        return initialize_external_store(root, legacy_compatible=legacy_compatible)
+        return initialize_external_store(root)
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
 
@@ -472,9 +457,7 @@ def read_planledger_storage_binding(path: Path) -> StorageBinding:
         raise _map_error(exc) from exc
 
 
-def write_planledger_storage_binding(
-    path: Path, binding: StorageBinding
-) -> None:
+def write_planledger_storage_binding(path: Path, binding: StorageBinding) -> None:
     try:
         write_storage_binding(path, binding)
     except LedgerCoreError as exc:
@@ -546,7 +529,7 @@ def plan_schema_v2_to_v3_manifest(
     loaded: Any,
 ) -> LedgerProjectManifest:
     try:
-        return plan_schema_v2_to_v3(loaded)
+        return cast(LedgerProjectManifest, plan_schema_v2_to_v3(loaded))
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
 
@@ -562,9 +545,7 @@ def derive_planledger_tool_config_path(project_root: Path) -> Path:
     return derive_tool_config_path(project_root, TOOL_NAME)
 
 
-def derive_planledger_project_mount_path(
-    project_root: Path, mount_name: str
-) -> Path:
+def derive_planledger_project_mount_path(project_root: Path, mount_name: str) -> Path:
     return derive_project_mount_path(project_root, TOOL_NAME, mount_name)
 
 
@@ -594,9 +575,7 @@ def derive_planledger_user_data_mount_path(
     )
 
 
-def resolve_planledger_external_root(
-    root: Path | str, *, project_root: Path
-) -> Path:
+def resolve_planledger_external_root(root: Path | str, *, project_root: Path) -> Path:
     return resolve_external_root(root, project_root=project_root)
 
 

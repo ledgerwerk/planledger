@@ -205,3 +205,16 @@ def test_required_topics_are_exposed_in_profile_payload() -> None:
     ]
     assert payload["max_required_questions"] == 12
     assert payload["min_resolved_required_questions_before_done"] == 1
+
+
+def test_canonical_profile_takes_precedence_over_deprecated_alias() -> None:
+    config = {
+        "prompt_profiles": {
+            "planning_workshop": {"enabled": False, "activation": "always"},
+            "planning_interview": {"enabled": True, "activation": "always"},
+        }
+    }
+    profile = load_prompt_profile(config, request_text="anything")
+    assert profile.name == "planning_workshop"
+    assert profile.enabled is False
+    assert profile.active is False

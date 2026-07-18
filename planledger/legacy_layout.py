@@ -21,6 +21,8 @@ else:  # pragma: no cover
 
 from planledger.errors import PlanledgerError
 
+LEGACY_CONFIG_FILENAMES: tuple[str, str] = ("planledger.toml", ".planledger.toml")
+
 LegacySourceKind = Literal[
     "uninitialized",
     "legacy_local",
@@ -45,6 +47,7 @@ class LegacySource:
     legacy_external_root: Path | None = None
     project_uuid: str | None = None
     blockers: tuple[str, ...] = ()
+    retired_artifacts: tuple[Path, ...] = ()
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -64,9 +67,19 @@ def _read_toml(path: Path) -> dict[str, object]:
     return value
 
 
-def discover_legacy_source(project_root: Path) -> LegacySource:
+def _discover_retired_artifacts(project_root: Path) -> tuple[Path, ...]:
+    candidates = (
+        project_root / ".planledger" / "ledgers" / "main",
+        project_root / ".ledger" / "plan" / "data",
+        project_root / ".ledger" / "plan" / "ledgers" / "main",
+    )
+    return tuple(path for path in candidates if path.exists())
+
+
+def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
     project_root = project_root.resolve(strict=False)
     ledger_dir = project_root / ".ledger"
+    retired_artifacts = _discover_retired_artifacts(project_root)
     manifest_path = ledger_dir / "ledger.toml"
     if manifest_path.is_file():
         try:
@@ -80,7 +93,11 @@ def discover_legacy_source(project_root: Path) -> LegacySource:
             )
         schema = document.get("schema_version")
         if schema == 3:
-            return LegacySource(kind="canonical", project_root=project_root)
+            return LegacySource(
+                kind="canonical",
+                project_root=project_root,
+                retired_artifacts=retired_artifacts,
+            )
         if schema == 2:
             return LegacySource(
                 kind="schema_migration_required",
@@ -194,7 +211,8 @@ def discover_legacy_source(project_root: Path) -> LegacySource:
         return LegacySource(kind="uninitialized", project_root=project_root)
     if len(candidates) > 1:
         blockers = tuple(
-            f"{c.kind}: {c.legacy_data_root or c.legacy_config_path}" for c in candidates
+            f"{c.kind}: {c.legacy_data_root or c.legacy_config_path}"
+            for c in candidates
         )
         return LegacySource(
             kind="invalid",
