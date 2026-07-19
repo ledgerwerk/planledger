@@ -1,0 +1,478 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 5
+release_version: v0.3.0
+git_base_ref: 5003a3860f2035acf966f102e73b0ccf9483226b
+git_base_sha: 5003a3860f2035acf966f102e73b0ccf9483226b
+git_head_ref: HEAD
+git_head_sha: a3dc3df0ac710c46e8cdb94cd4265187998d6651
+git_range: 5003a3860f2035acf966f102e73b0ccf9483226b..a3dc3df0ac710c46e8cdb94cd4265187998d6651
+commit_count: 13
+rows:
+  - sha: 9840fddb8acc5c24608458423702c85c2ba7409b
+    source_ref: git:9840fddb8acc5c24608458423702c85c2ba7409b
+    short_sha: 9840fdd
+    changed_paths:
+      - .releaseledger.toml
+      - .releaseledger/ledgers/main/events/events.jsonl
+      - .releaseledger/ledgers/main/indexes/entries.json
+      - .releaseledger/ledgers/main/indexes/releases.json
+      - .releaseledger/ledgers/main/releases/v0.2.0/audit/commit-audit.yaml
+      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0001.md
+      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0002.md
+      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0003.md
+      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0004.md
+      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0005.md
+      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0006.md
+      - .releaseledger/ledgers/main/releases/v0.2.0/release.md
+      - CHANGELOG.md
+      - examples/agent_workshop_create_v1.md
+      - examples/agent_workshop_update_v1.md
+      - planledger/cli.py
+      - planledger/storage.py
+      - skills/planledger/SKILL.md
+      - tests/test_next_action.py
+      - tests/test_plan_guardrails.py
+    stats:
+      files_changed: 0
+      insertions: 767
+      deletions: 109
+    inspected: true
+    inspected_paths:
+      - planledger/cli.py
+      - planledger/storage.py
+      - skills/planledger/SKILL.md
+      - CHANGELOG.md
+    observed_behavior: Pre-commit fixes and v0.2.0 release preparation
+    public_impact: internal
+    decision: internal
+    evidence_subject: "chore: fix pre-commit and prepare release"
+    target_entry_id: entry-0005
+  - sha: 3f0c70f0d141f0c74a386eb42f1719ff6d006153
+    source_ref: git:3f0c70f0d141f0c74a386eb42f1719ff6d006153
+    short_sha: 3f0c70f
+    changed_paths:
+      - CHANGELOG.md
+    stats:
+      files_changed: 0
+      insertions: 3
+      deletions: 0
+    inspected: true
+    inspected_paths:
+      - CHANGELOG.md
+    observed_behavior: Changelog formatting cleanup
+    public_impact: internal
+    decision: internal
+    evidence_subject: "chore: pre-commit"
+    target_entry_id: entry-0005
+  - sha: d3485c1fed8f96f26061820a3bbab91a1412714c
+    source_ref: git:d3485c1fed8f96f26061820a3bbab91a1412714c
+    short_sha: d3485c1
+    changed_paths:
+      - .ledger/ledger.local.toml
+      - .ledger/ledger.toml
+      - .ledger/ledger.toml.lock
+      - .ledger/task/config.toml
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/architecture.rst
+      - docs/cli.rst
+      - docs/components.rst
+      - docs/installation.rst
+      - docs/overview.rst
+      - docs/quickstart.rst
+      - docs/storage.rst
+      - planledger/cli.py
+      - planledger/id_inventory.py
+      - planledger/migration.py
+      - planledger/models.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/storage.py
+      - pyproject.toml
+      - skills/planledger/README.md
+      - skills/planledger/SKILL.md
+      - tests/test_sibling_storage_migration.py
+    stats:
+      files_changed: 0
+      insertions: 2395
+      deletions: 330
+    inspected: true
+    inspected_paths:
+      - planledger/cli.py
+      - planledger/storage.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/id_inventory.py
+      - planledger/models.py
+      - docs/storage.rst
+      - docs/architecture.rst
+      - docs/cli.rst
+      - README.md
+      - pyproject.toml
+    observed_behavior:
+      Initial Ledgercore 0.4.0 integration with sibling-ledger storage
+      provider, project-scoped mount layout, and canonical project context resolution
+    public_impact: public
+    decision: accepted
+    evidence_subject:
+      "feat: support new ledgercore 0.4.0  with better project scopted
+      storage and config handling"
+    target_entry_id: entry-0001
+  - sha: 64f208f4ee102b3b6583487399bd5f4b3372fd70
+    source_ref: git:64f208f4ee102b3b6583487399bd5f4b3372fd70
+    short_sha: 64f208f
+    changed_paths:
+      - .ledger/ledger.local.toml
+      - .ledger/ledger.local.toml.lock
+      - .ledger/ledger.toml
+      - .ledger/plan/config.toml
+      - docs/agent-workflow.rst
+      - docs/architecture.rst
+      - docs/cli.rst
+      - docs/components.rst
+      - docs/overview.rst
+      - docs/quickstart.rst
+      - docs/storage.rst
+      - planledger/cli.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/storage.py
+      - tests/conftest.py
+      - tests/test_next_action.py
+      - tests/test_plan_bundle.py
+      - tests/test_sibling_storage_migration.py
+      - tests/test_storage.py
+    stats:
+      files_changed: 0
+      insertions: 457
+      deletions: 195
+    inspected: true
+    inspected_paths:
+      - planledger/cli.py
+      - planledger/storage.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - docs/storage.rst
+      - docs/cli.rst
+      - tests/test_sibling_storage_migration.py
+    observed_behavior:
+      Added sibling-ledger storage provider option with UUID-scoped
+      data paths and sibling store migration support
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: option to  migrate to sibling store"
+    target_entry_id: entry-0001
+  - sha: 0f36a5d7aca404cb8ebc730a1c720459cb930398
+    source_ref: git:0f36a5d7aca404cb8ebc730a1c720459cb930398
+    short_sha: 0f36a5d
+    changed_paths:
+      - .ledger/ledger.local.toml
+      - .ledger/ledger.local.toml.lock
+      - .ledger/ledger.toml
+      - .ledger/ledger.toml.lock
+      - .ledger/plan/config.toml
+      - .ledger/taskledger/.ledger-project.toml
+      - .ledger/taskledger/config.toml
+      - .taskledger.toml
+      - README.md
+      - docs/architecture.rst
+      - docs/storage.rst
+      - planledger/cli.py
+      - planledger/cli_writes.py
+      - planledger/domain_migration.py
+      - planledger/errors.py
+      - planledger/initialization.py
+      - planledger/ledgercore_backend.py
+      - planledger/legacy_layout.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/storage.py
+      - planledger/write_lock.py
+      - pyproject.toml
+      - skills/planledger/SKILL.md
+      - tests/conftest.py
+      - tests/test_config_discovery.py
+      - tests/test_info.py
+      - tests/test_init.py
+      - tests/test_json_contract.py
+      - tests/test_ledgercore_backend.py
+      - tests/test_ledgercore_import_boundaries.py
+      - tests/test_migration_quiescence.py
+      - tests/test_next_action.py
+      - tests/test_plan_bundle.py
+      - tests/test_plan_guardrails.py
+      - tests/test_planledger_domain_migration.py
+      - tests/test_planledger_ledgercore_050_context.py
+      - tests/test_sibling_storage_migration.py
+      - tests/test_skill_files.py
+      - tests/test_storage_commands_v3.py
+      - tests/test_write_lock.py
+    stats:
+      files_changed: 0
+      insertions: 4744
+      deletions: 1960
+    inspected: true
+    inspected_paths:
+      - planledger/cli.py
+      - planledger/cli_writes.py
+      - planledger/initialization.py
+      - planledger/ledgercore_backend.py
+      - planledger/legacy_layout.py
+      - planledger/domain_migration.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/storage.py
+      - planledger/write_lock.py
+      - planledger/errors.py
+      - pyproject.toml
+      - skills/planledger/SKILL.md
+      - docs/architecture.rst
+      - docs/storage.rst
+    observed_behavior:
+      Full migration to Ledgercore 0.5.0 with schema-3 manifest, write
+      guard, domain migration module, and Ledgercore backend adapter
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: migrate to ledgercore 0.5.0"
+    target_entry_id: entry-0001
+  - sha: f809a38655b8ed1ae295e521db7e5345315f85d3
+    source_ref: git:f809a38655b8ed1ae295e521db7e5345315f85d3
+    short_sha: f809a38
+    changed_paths:
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/architecture.rst
+      - docs/cli.rst
+      - docs/overview.rst
+      - docs/quickstart.rst
+      - docs/storage.rst
+      - planledger/cli.py
+      - planledger/diagnostics.py
+      - planledger/domain_migration.py
+      - planledger/initialization.py
+      - planledger/inventory.py
+      - planledger/ledgercore_backend.py
+      - planledger/legacy_layout.py
+      - planledger/migration.py
+      - planledger/next_action.py
+      - planledger/persistence.py
+      - planledger/plan_store.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/record_store.py
+      - planledger/storage.py
+      - planledger/workshop_store.py
+      - planledger/write_lock.py
+      - skills/planledger/README.md
+      - tests/conftest.py
+      - tests/test_config_discovery.py
+      - tests/test_doctor.py
+      - tests/test_init.py
+      - tests/test_json_contract.py
+      - tests/test_ledgercore_backend.py
+      - tests/test_ledgercore_import_boundaries.py
+      - tests/test_next_action.py
+      - tests/test_plan_bundle.py
+      - tests/test_plan_guardrails.py
+      - tests/test_planledger_domain_migration.py
+      - tests/test_planledger_ledgercore_050_context.py
+      - tests/test_project_inspection.py
+      - tests/test_prompt_profiles.py
+      - tests/test_sibling_storage_migration.py
+      - tests/test_storage.py
+    stats:
+      files_changed: 0
+      insertions: 1226
+      deletions: 1094
+    inspected: true
+    inspected_paths:
+      - planledger/cli.py
+      - planledger/diagnostics.py
+      - planledger/domain_migration.py
+      - planledger/initialization.py
+      - planledger/inventory.py
+      - planledger/ledgercore_backend.py
+      - planledger/legacy_layout.py
+      - planledger/migration.py
+      - planledger/next_action.py
+      - planledger/persistence.py
+      - planledger/plan_store.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - planledger/record_store.py
+      - planledger/storage.py
+      - planledger/workshop_store.py
+      - planledger/write_lock.py
+      - docs/architecture.rst
+      - docs/cli.rst
+      - docs/agent-workflow.rst
+    observed_behavior:
+      Post-migration refinements including persistence layer extraction,
+      record store, plan store, workshop store, and simplified storage facade
+    public_impact: public
+    decision: accepted
+    evidence_subject: "feat: fix issues"
+    target_entry_id: entry-0002
+  - sha: d4ef9192d7efb089125aaeb23065204b544504e1
+    source_ref: git:d4ef9192d7efb089125aaeb23065204b544504e1
+    short_sha: d4ef919
+    changed_paths:
+      - README.md
+    stats:
+      files_changed: 0
+      insertions: 2
+      deletions: 3
+    inspected: true
+    inspected_paths:
+      - README.md
+    observed_behavior: README text cleanup
+    public_impact: internal
+    decision: internal
+    evidence_subject: "chore: pre-commit"
+    target_entry_id: entry-0005
+  - sha: 46c27a7851b88cce9b4433a5d654d408906d42ad
+    source_ref: git:46c27a7851b88cce9b4433a5d654d408906d42ad
+    short_sha: 46c27a7
+    changed_paths:
+      - planledger/storage.py
+    stats:
+      files_changed: 0
+      insertions: 3
+      deletions: 0
+    inspected: true
+    inspected_paths:
+      - planledger/storage.py
+    observed_behavior:
+      Re-export initialize_project from planledger.initialization for
+      backward compatibility
+    public_impact: internal
+    decision: internal
+    evidence_subject: "fix: missing import"
+    target_entry_id: entry-0007
+  - sha: 3a349645016e8e6e073b90fbc4aa434056e19b23
+    source_ref: git:3a349645016e8e6e073b90fbc4aa434056e19b23
+    short_sha: 3a34964
+    changed_paths:
+      - .ledger/ledger.toml
+      - .ledger/migrations/cb79bed0-5c0e-497f-a31a-69ef4ccc54c3.toml
+      - .ledger/releaseledger/.ledger-project.toml
+      - .ledger/releaseledger/.releaseledger-migration.jsonl
+      - .ledger/releaseledger/config.toml
+      - .ledger/releaseledger/data/.ledger-project.toml
+      - .ledger/releaseledger/data/ledgers/main/events/events.jsonl
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/audit/commit-audit.yaml
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/entries/entry-0001.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/entries/entry-0002.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/entries/entry-0003.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/entries/entry-0004.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/entries/entry-0005.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/entries/entry-0006.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/release.md
+      - .ledger/releaseledger/write.lock
+      - .releaseledger/ledgers/main/indexes/entries.json
+      - .releaseledger/ledgers/main/indexes/releases.json
+    stats:
+      files_changed: 0
+      insertions: 70
+      deletions: 137
+    inspected: true
+    inspected_paths:
+      - .ledger/ledger.toml
+      - .ledger/releaseledger/config.toml
+    observed_behavior: Migrated releaseledger storage layout to .ledger directory structure
+    public_impact: internal
+    decision: internal
+    evidence_subject: "chore: migrate releaseledger"
+    target_entry_id: entry-0006
+  - sha: 5339b168cf559ae1b41df8435c0a99bc1d026f17
+    source_ref: git:5339b168cf559ae1b41df8435c0a99bc1d026f17
+    short_sha: 5339b16
+    changed_paths:
+      - planledger/write_lock.py
+      - tests/test_migration_quiescence.py
+      - tests/test_planledger_ledgercore_050_context.py
+      - tests/test_storage_commands_v3.py
+    stats:
+      files_changed: 0
+      insertions: 27
+      deletions: 5
+    inspected: true
+    inspected_paths:
+      - planledger/write_lock.py
+    observed_behavior:
+      Fixed write lock PID liveness check on Windows to use OpenProcess
+      instead of os.kill which calls TerminateProcess
+    public_impact: public
+    decision: accepted
+    evidence_subject: "fix: windows pid fixes"
+    target_entry_id: entry-0004
+  - sha: e76dd5d65318f76a1861f287a0b9c41b4fa6bcda
+    source_ref: git:e76dd5d65318f76a1861f287a0b9c41b4fa6bcda
+    short_sha: e76dd5d
+    changed_paths:
+      - .ledger/ledger.toml
+      - .ledger/planledger/.ledger-project.toml
+      - .ledger/planledger/config.toml
+      - planledger.toml
+      - planledger/initialization.py
+      - tests/test_init.py
+    stats:
+      files_changed: 0
+      insertions: 171
+      deletions: 62
+    inspected: true
+    inspected_paths:
+      - planledger/initialization.py
+      - .ledger/planledger/config.toml
+      - planledger.toml
+    observed_behavior:
+      Init now recovers incomplete Planledger registration and config
+      bindings instead of failing with a conflict error
+    public_impact: public
+    decision: accepted
+    evidence_subject: "chore: fix pre-commit and fix init"
+    target_entry_id: entry-0003
+  - sha: 5d27a70bb7f8a704a2a0432c334c19cefa63da43
+    source_ref: git:5d27a70bb7f8a704a2a0432c334c19cefa63da43
+    short_sha: 5d27a70
+    changed_paths:
+      - tests/test_skill_files.py
+    stats:
+      files_changed: 0
+      insertions: 3
+      deletions: 1
+    inspected: true
+    inspected_paths:
+      - tests/test_skill_files.py
+    observed_behavior:
+      Fixed test path assertion to check path leaf name instead of
+      suffix
+    public_impact: internal
+    decision: internal
+    evidence_subject: "fix: path issue"
+    target_entry_id: entry-0008
+  - sha: a3dc3df0ac710c46e8cdb94cd4265187998d6651
+    source_ref: git:a3dc3df0ac710c46e8cdb94cd4265187998d6651
+    short_sha: a3dc3df
+    changed_paths:
+      - tests/test_write_lock.py
+    stats:
+      files_changed: 0
+      insertions: 9
+      deletions: 2
+    inspected: true
+    inspected_paths:
+      - tests/test_write_lock.py
+    observed_behavior: Fixed pytest for write lock test
+    public_impact: internal
+    decision: internal
+    evidence_subject: "fix: fix pytest"
+    target_entry_id: entry-0008
