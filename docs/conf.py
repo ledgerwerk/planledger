@@ -1,15 +1,4 @@
-import os
-import sys
 from importlib import metadata
-
-from docutils.parsers.rst.directives import html as docutils_html_directives
-from docutils.parsers.rst.directives import misc as docutils_misc_directives
-
-sys.path.insert(0, os.path.abspath(".."))
-if not hasattr(docutils_misc_directives, "Meta") and hasattr(
-    docutils_html_directives, "Meta"
-):
-    docutils_misc_directives.Meta = docutils_html_directives.Meta
 
 project = "planledger"
 copyright = "2026, Planledger Contributors"
@@ -26,20 +15,30 @@ except metadata.PackageNotFoundError:
 version = ".".join(release.split(".")[:2])
 
 extensions = [
+    "myst_parser",
     "sphinx.ext.autodoc",
+    "sphinx_autodoc_typehints",
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx.ext.todo",
     "sphinx.ext.coverage",
 ]
+source_suffix = {
+    ".md": "markdown",
+}
+master_doc = "index"
+
+myst_enable_extensions = [
+    "colon_fence",
+    "deflist",
+]
+myst_heading_anchors = 3
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "changelog.md"]
 
 html_theme = "sphinx_rtd_theme"
-html_static_path = ["_static"]
-
 autodoc_default_options = {
     "members": True,
     "member-order": "bysource",
