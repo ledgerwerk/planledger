@@ -2,71 +2,15 @@ schema_version: 1
 object_type: commit_audit_sheet
 versioning:
   schema_version: 1
-  revision: 5
+  revision: 8
 release_version: v0.3.0
-git_base_ref: 5003a3860f2035acf966f102e73b0ccf9483226b
-git_base_sha: 5003a3860f2035acf966f102e73b0ccf9483226b
+git_base_ref: v0.2.0
+git_base_sha: 3f0c70f0d141f0c74a386eb42f1719ff6d006153
 git_head_ref: HEAD
-git_head_sha: a3dc3df0ac710c46e8cdb94cd4265187998d6651
-git_range: 5003a3860f2035acf966f102e73b0ccf9483226b..a3dc3df0ac710c46e8cdb94cd4265187998d6651
+git_head_sha: 35f84ddc1eb2182b6904926d1fe88318a77a9ed6
+git_range: 3f0c70f0d141f0c74a386eb42f1719ff6d006153..35f84ddc1eb2182b6904926d1fe88318a77a9ed6
 commit_count: 13
 rows:
-  - sha: 9840fddb8acc5c24608458423702c85c2ba7409b
-    source_ref: git:9840fddb8acc5c24608458423702c85c2ba7409b
-    short_sha: 9840fdd
-    changed_paths:
-      - .releaseledger.toml
-      - .releaseledger/ledgers/main/events/events.jsonl
-      - .releaseledger/ledgers/main/indexes/entries.json
-      - .releaseledger/ledgers/main/indexes/releases.json
-      - .releaseledger/ledgers/main/releases/v0.2.0/audit/commit-audit.yaml
-      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0001.md
-      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0002.md
-      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0003.md
-      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0004.md
-      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0005.md
-      - .releaseledger/ledgers/main/releases/v0.2.0/entries/entry-0006.md
-      - .releaseledger/ledgers/main/releases/v0.2.0/release.md
-      - CHANGELOG.md
-      - examples/agent_workshop_create_v1.md
-      - examples/agent_workshop_update_v1.md
-      - planledger/cli.py
-      - planledger/storage.py
-      - skills/planledger/SKILL.md
-      - tests/test_next_action.py
-      - tests/test_plan_guardrails.py
-    stats:
-      files_changed: 0
-      insertions: 767
-      deletions: 109
-    inspected: true
-    inspected_paths:
-      - planledger/cli.py
-      - planledger/storage.py
-      - skills/planledger/SKILL.md
-      - CHANGELOG.md
-    observed_behavior: Pre-commit fixes and v0.2.0 release preparation
-    public_impact: internal
-    decision: internal
-    evidence_subject: "chore: fix pre-commit and prepare release"
-    target_entry_id: entry-0005
-  - sha: 3f0c70f0d141f0c74a386eb42f1719ff6d006153
-    source_ref: git:3f0c70f0d141f0c74a386eb42f1719ff6d006153
-    short_sha: 3f0c70f
-    changed_paths:
-      - CHANGELOG.md
-    stats:
-      files_changed: 0
-      insertions: 3
-      deletions: 0
-    inspected: true
-    inspected_paths:
-      - CHANGELOG.md
-    observed_behavior: Changelog formatting cleanup
-    public_impact: internal
-    decision: internal
-    evidence_subject: "chore: pre-commit"
-    target_entry_id: entry-0005
   - sha: d3485c1fed8f96f26061820a3bbab91a1412714c
     source_ref: git:d3485c1fed8f96f26061820a3bbab91a1412714c
     short_sha: d3485c1
@@ -118,6 +62,7 @@ rows:
       provider, project-scoped mount layout, and canonical project context resolution
     public_impact: public
     decision: accepted
+    stale: false
     evidence_subject:
       "feat: support new ledgercore 0.4.0  with better project scopted
       storage and config handling"
@@ -166,6 +111,7 @@ rows:
       data paths and sibling store migration support
     public_impact: public
     decision: accepted
+    stale: false
     evidence_subject: "feat: option to  migrate to sibling store"
     target_entry_id: entry-0001
   - sha: 0f36a5d7aca404cb8ebc730a1c720459cb930398
@@ -241,6 +187,7 @@ rows:
       guard, domain migration module, and Ledgercore backend adapter
     public_impact: public
     decision: accepted
+    stale: false
     evidence_subject: "feat: migrate to ledgercore 0.5.0"
     target_entry_id: entry-0001
   - sha: f809a38655b8ed1ae295e521db7e5345315f85d3
@@ -319,6 +266,7 @@ rows:
       record store, plan store, workshop store, and simplified storage facade
     public_impact: public
     decision: accepted
+    stale: false
     evidence_subject: "feat: fix issues"
     target_entry_id: entry-0002
   - sha: d4ef9192d7efb089125aaeb23065204b544504e1
@@ -336,6 +284,7 @@ rows:
     observed_behavior: README text cleanup
     public_impact: internal
     decision: internal
+    stale: false
     evidence_subject: "chore: pre-commit"
     target_entry_id: entry-0005
   - sha: 46c27a7851b88cce9b4433a5d654d408906d42ad
@@ -355,6 +304,7 @@ rows:
       backward compatibility
     public_impact: internal
     decision: internal
+    stale: false
     evidence_subject: "fix: missing import"
     target_entry_id: entry-0007
   - sha: 3a349645016e8e6e073b90fbc4aa434056e19b23
@@ -390,6 +340,7 @@ rows:
     observed_behavior: Migrated releaseledger storage layout to .ledger directory structure
     public_impact: internal
     decision: internal
+    stale: false
     evidence_subject: "chore: migrate releaseledger"
     target_entry_id: entry-0006
   - sha: 5339b168cf559ae1b41df8435c0a99bc1d026f17
@@ -412,6 +363,7 @@ rows:
       instead of os.kill which calls TerminateProcess
     public_impact: public
     decision: accepted
+    stale: false
     evidence_subject: "fix: windows pid fixes"
     target_entry_id: entry-0004
   - sha: e76dd5d65318f76a1861f287a0b9c41b4fa6bcda
@@ -438,6 +390,7 @@ rows:
       bindings instead of failing with a conflict error
     public_impact: public
     decision: accepted
+    stale: false
     evidence_subject: "chore: fix pre-commit and fix init"
     target_entry_id: entry-0003
   - sha: 5d27a70bb7f8a704a2a0432c334c19cefa63da43
@@ -457,6 +410,7 @@ rows:
       suffix
     public_impact: internal
     decision: internal
+    stale: false
     evidence_subject: "fix: path issue"
     target_entry_id: entry-0008
   - sha: a3dc3df0ac710c46e8cdb94cd4265187998d6651
@@ -474,5 +428,103 @@ rows:
     observed_behavior: Fixed pytest for write lock test
     public_impact: internal
     decision: internal
+    stale: false
     evidence_subject: "fix: fix pytest"
     target_entry_id: entry-0008
+  - sha: 7167e062b98d7aaed812346cacfe35950146855d
+    source_ref: git:7167e062b98d7aaed812346cacfe35950146855d
+    short_sha: 7167e06
+    changed_paths:
+      - .ledger/releaseledger/data/ledgers/main/events/events.jsonl
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.1.0/release.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.2.0/release.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/audit/commit-audit.yaml
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0001.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0002.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0003.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0004.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0005.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0006.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0007.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/entries/entry-0008.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.3.0/release.md
+      - CHANGELOG.md
+    stats:
+      files_changed: 0
+      insertions: 800
+      deletions: 2
+    inspected: true
+    inspected_paths:
+      - CHANGELOG.md
+    observed_behavior:
+      Added the existing v0.3.0 release section and generated marker
+      to CHANGELOG.md as release preparation
+    public_impact: internal
+    decision: internal
+    stale: false
+    evidence_subject: "doc: update changelog"
+    target_entry_id: entry-0005
+    notes:
+      Release preparation only; covered by the existing documentation entry without
+      a new public bullet
+  - sha: 35f84ddc1eb2182b6904926d1fe88318a77a9ed6
+    source_ref: git:35f84ddc1eb2182b6904926d1fe88318a77a9ed6
+    short_sha: 35f84dd
+    changed_paths:
+      - .ledger/ledger.toml
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/cli.rst
+      - docs/components.rst
+      - docs/plan-lifecycle.rst
+      - examples/rendered_implementation_brief.md
+      - examples/requests/test_recovery_review.md
+      - planledger/bundle.py
+      - planledger/cli.py
+      - planledger/cli_writes.py
+      - planledger/domain_migration.py
+      - planledger/guardrails.py
+      - planledger/id_inventory.py
+      - planledger/ledgercore_backend.py
+      - planledger/migration.py
+      - planledger/models.py
+      - planledger/project_context.py
+      - planledger/prompt_profiles.py
+      - planledger/render.py
+      - planledger/storage.py
+      - skills/planledger/SKILL.md
+      - tests/test_info.py
+      - tests/test_next_action.py
+      - tests/test_plan_build.py
+      - tests/test_plan_create.py
+      - tests/test_plan_guardrails.py
+      - tests/test_skill_files.py
+      - tests/test_write_lock.py
+    stats:
+      files_changed: 0
+      insertions: 761
+      deletions: 92
+    inspected: true
+    inspected_paths:
+      - planledger/render.py
+      - planledger/cli.py
+      - planledger/storage.py
+      - tests/test_plan_build.py
+      - tests/test_plan_create.py
+      - tests/test_plan_guardrails.py
+      - README.md
+      - docs/agent-workflow.rst
+      - docs/components.rst
+      - docs/plan-lifecycle.rst
+      - skills/planledger/SKILL.md
+    observed_behavior:
+      Added v2 implementation-brief rendering with optional request
+      and history sections, preserved Markdown heading fragments, expanded file-driven
+      request support, and enforced per-TODO validation sections and commands
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: improved plan render output"
+    notes:
+      Public CLI, rendering, validation, documentation, and test behavior reviewed
+      from the commit diff
