@@ -53,6 +53,7 @@ A plan cannot be marked ``done`` unless all of the following pass:
 - ``target_files`` contains at least one repo-relative file path or Markdown link.
 - ``validation`` contains at least one validation command.
 - No required component contains placeholder content (``TBD``, ``TODO:``, ``<fill>``, etc.).
+- Every TODO item has a **Validation** section with at least one recognizable validation command.
 - ``open_questions`` contains no unresolved required questions (no ``- [ ] REQUIRED:``).
 
 Plan validation means the plan artifact is structurally ready for handoff.

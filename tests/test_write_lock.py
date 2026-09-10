@@ -69,31 +69,33 @@ def test_acquire_fails_when_other_writer_holds_lock(
         # Use a clearly different PID that is alive.
         existing["pid"] = 1  # init is alive on every POSIX system
         path.write_text(json.dumps(existing, indent=2, sort_keys=True))
-        with pytest.raises(PlanledgerError) as exc:
-            with acquire_planledger_write_lock(
+        with (
+            pytest.raises(PlanledgerError) as exc,
+            acquire_planledger_write_lock(
                 project,
                 command="plan create",
                 project_uuid="00000000-0000-4000-8000-000000000003",
-            ):
-                pass
+            ),
+        ):
+            pass
         assert exc.value.code == "PLANLEDGER_STORAGE_MIGRATION_ACTIVE_WRITER"
 
 
 def test_acquire_tolerates_own_lock_reacquisition(tmp_path: Path) -> None:
     project = _project_root(tmp_path)
-    with acquire_planledger_write_lock(
-        project, command="init", project_uuid="00000000-0000-4000-8000-000000000004"
-    ):
-        # Re-acquire is allowed because the same process already holds the
-        # lock.
-        with acquire_planledger_write_lock(
+    with (
+        acquire_planledger_write_lock(
+            project, command="init", project_uuid="00000000-0000-4000-8000-000000000004"
+        ),
+        acquire_planledger_write_lock(
             project,
             command="init",
             project_uuid="00000000-0000-4000-8000-000000000004",
-        ):
-            snapshot = inspect_write_lock(project)
-            assert snapshot.held is True
-            assert snapshot.is_self is True
+        ),
+    ):
+        snapshot = inspect_write_lock(project)
+        assert snapshot.held is True
+        assert snapshot.is_self is True
 
 
 def test_unlink_only_removes_own_lock(tmp_path: Path) -> None:
@@ -164,13 +166,15 @@ def test_require_quiescent_accepts_unlocked_project(tmp_path: Path) -> None:
 
 def test_acquire_releases_on_exception(tmp_path: Path) -> None:
     project = _project_root(tmp_path)
-    with pytest.raises(RuntimeError):
-        with acquire_planledger_write_lock(
+    with (
+        pytest.raises(RuntimeError),
+        acquire_planledger_write_lock(
             project,
             command="init",
             project_uuid="00000000-0000-4000-8000-000000000005",
-        ):
-            raise RuntimeError("boom")
+        ),
+    ):
+        raise RuntimeError("boom")
     snapshot = inspect_write_lock(project)
     assert snapshot.held is False
 

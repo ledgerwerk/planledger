@@ -66,7 +66,7 @@ planledger status --check
 planledger init
 
 # Create a new independent plan. The new plan becomes active.
-planledger plan create --title "Add feature A" --request "Please review how we can add feature A."
+planledger plan create --title "Review Ledgercore 0.5 migration" --request-file planning/review-request.md
 
 # Populate components on the active plan (inspect repository files first)
 planledger plan component set context --file context.md
@@ -89,8 +89,20 @@ planledger plan validate
 planledger plan status done --reason "Ready for coding agent handoff."
 
 # Export rendered plan to workspace root for the harness
-planledger plan export
+planledger plan export --out ledgercore_0_5_review_implementation_brief.md
 
+## File-driven implementation reviews
+
+When a planning or review request already exists as a file, prefer `--request-file` so Planledger snapshots the exact UTF-8 content into the request component. The source file is not needed after creation. For failing-test recovery or implementation reviews, inspect the repository first, record observed evidence separately from proposed changes, distinguish stale tests from production defects, inspect call sites before dead-code claims, prioritize findings as P0/P1/P2, and use staged TODOs with file-level validation.
+
+Implementation-brief exports should use an explicit descriptive path when they are intended for direct handoff:
+
+```bash
+planledger plan create --title "Review Ledgercore 0.5 migration" --request-file planning/review-request.md
+planledger plan export --out ledgercore_0_5_review_implementation_brief.md
+```
+
+The default `plan-000X.md` export remains available for generic plans. `done` means the brief is structurally ready for a coding agent, not that the implementation tests have passed.
 Use a **workshop** first when a request is about shaping a feature, finding examples, clarifying behavior, product rules, BDD scenarios, acceptance scenarios, or requirement exploration. Use a **plan** directly when the request is implementation-oriented, asks for a coding-agent handoff, names target files, revises an existing `plan-000X`, or explicitly asks for a PLAN.md-style artifact. Do not ask which mode to use unless both paths are equally valid; prefer workshop-first when `prompt_profiles.planning_workshop.enabled = true` and the request is product or behavior shaping.
 
 ## Todo item template
@@ -151,7 +163,7 @@ Each plan stores these components:
 
 ```md
 ---
-planledger_schema: planledger.rendered_plan.v1
+planledger_schema: planledger.rendered_plan.v2
 plan_id: plan-0003
 id: plan-0003
 kind: plan

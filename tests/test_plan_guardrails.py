@@ -412,3 +412,34 @@ def test_resolved_topic_tagged_required_questions_pass_done() -> None:
     )
     errors = validate_handoff_contents(contents)
     assert not any("unresolved required questions" in e for e in errors)
+
+
+def test_done_rejects_todo_without_validation_section() -> None:
+    contents = _valid_contents()
+    contents["todo_items"] = (
+        "### TODO-001: Add guardrails\n\n"
+        "**Target files**\n\n"
+        "- [`planledger/guardrails.py`](planledger/guardrails.py)\n\n"
+        "**Acceptance criteria**\n\n"
+        "- [ ] Guardrails work.\n\n"
+        "No validation section."
+    )
+
+    errors = validate_handoff_contents(contents)
+    assert any("Validation section" in error for error in errors)
+
+
+def test_done_rejects_todo_validation_without_command() -> None:
+    contents = _valid_contents()
+    contents["todo_items"] = (
+        "### TODO-001: Add guardrails\n\n"
+        "**Target files**\n\n"
+        "- [`planledger/guardrails.py`](planledger/guardrails.py)\n\n"
+        "**Acceptance criteria**\n\n"
+        "- [ ] Guardrails work.\n\n"
+        "**Validation**\n\n"
+        "Manual inspection only."
+    )
+
+    errors = validate_handoff_contents(contents)
+    assert any("validation command" in error for error in errors)

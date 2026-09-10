@@ -128,7 +128,7 @@ def test_info_on_empty_initialized_workspace(
     assert "Workshops (0):" in result.stdout
     assert "total:      0 B" in result.stdout
 
-    result2, payload = invoke_json(initialized_workspace, "info")
+    _result2, payload = invoke_json(initialized_workspace, "info")
     r = payload["result"]
     assert r["plan_count"] == 0
     assert r["workshop_count"] == 0

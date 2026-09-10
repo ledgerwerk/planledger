@@ -123,6 +123,64 @@ Plan-direct skeleton (when the request is already implementation-oriented):
 planledger plan create --title "Short title" --request "Original request"
 ```
 
+## Request-file and implementation-brief protocol
+
+When the user supplies a request path, use the path as the input transport. Do not read the file into chat and paste its contents into a shell `--request` argument. Planledger snapshots the UTF-8 contents into the existing `request` component, so the source file may be changed or deleted after creation.
+
+Use the equivalent direct-plan forms:
+
+```bash
+# Inline request
+planledger plan create --title "Short title" --request "Original request"
+
+# Request already exists as a file
+planledger plan create --title "Short title" --request-file path/to/request.md
+
+# Piped request
+cat request.md | planledger plan create --title "Short title" --stdin
+```
+
+The request component is an input snapshot, not a second handoff body. The default rendered implementation brief may omit it while `plan show --component request` remains available. For an explicit implementation brief, export through the existing command with a descriptive workspace-relative path:
+
+```bash
+planledger plan export --out planledger_review_implementation_brief.md
+```
+
+## Implementation-review and recovery protocol
+
+For implementation reviews, failing-test investigations, migration recovery, architecture cleanup, dead-code reviews, and release-readiness analysis, go directly to a plan when the request is already implementation-oriented. Keep workshop-first behavior for product shaping, behavior exploration, and unresolved requirements.
+
+Follow this codebase-first order:
+
+1. Capture the request, preferably with `--request-file` when a path was supplied.
+2. Inspect repository files and any reconstruction or snapshot instructions before treating packed material as source code.
+3. Reproduce the reported failure or establish a baseline when practical. Record the exact command and exact pass/fail counts when available.
+4. Isolate primary root causes using repository evidence.
+5. Separate production defects from stale tests, stale documentation, or obsolete assumptions.
+6. Inspect duplication, dead code, call sites, ownership boundaries, and error handling. Do not call private code dead without checking its call sites.
+7. Rank findings by implementation priority: P0 for blocking correctness or broken integration, P1 for maintainability or structural cleanup, and P2 for follow-up quality, diagnostics, documentation, or ergonomics.
+8. Propose the smallest coherent corrections. Prefer an ownership fix over test-by-test workarounds when one defect explains many failures.
+9. Define staged implementation steps in a useful order.
+10. Attach repository-relative target files, acceptance criteria, and validation commands to each TODO.
+11. Define non-goals and compatibility constraints to prevent scope drift.
+12. Provide a final recommendation.
+13. Build, validate, mark done when appropriate, and export the standalone handoff.
+
+Evidence rules:
+
+- Distinguish **Observed evidence** from **Proposed changes** in the plan components.
+- Never claim a test passed unless it was executed. If a diagnostic patch or probe was used, label it diagnostic rather than implemented work.
+- Record exact commands and results for tests that were actually run.
+- Distinguish production regressions from stale test assumptions before choosing a correction.
+- Use repository-relative paths and name functions or classes when they matter.
+- Avoid speculative refactors unrelated to the request.
+
+An implementation-review brief should contain, when applicable, `Purpose`, `Executive verdict`, `Observed baseline/evidence`, `Root cause analysis` or principal findings, `Required correction`, cleanup/refactor boundaries, acceptance criteria, test strategy, `Detailed implementation sequence`, file-level tasks, validation commands, risks, `Non-goals`, and `Final recommendation`. This is a quality contract for the skill, not a new Planledger schema. Feature plans may use domain-specific headings instead.
+
+A component may supply a complete Markdown fragment. If its first non-whitespace content starts with `## `, the renderer preserves those top-level headings without adding the component's canonical wrapper heading. Ordinary component content continues to receive the existing default heading. A useful mapping is: `summary` for `Purpose` and `Executive verdict`, `context` for root cause and evidence, `approach` for correction and design, `todo_items` for the detailed sequence, `validation` for the full acceptance checklist, and `notes` for non-goals and final recommendation.
+
+`done` means the implementation brief is structurally ready for coding-agent handoff. Plan validation does not mean the implementation itself has passed its tests.
+
 ## Planning protocol
 
 1. Create the plan:
@@ -241,6 +299,9 @@ Before setting `done`:
 2. Run `planledger plan validate`.
 3. Confirm every required component is non-empty and specific.
 4. Confirm every todo has target files, acceptance criteria, and validation commands.
+
+- Confirm every TODO has a **Validation** heading and at least one recognizable command inside that TODO block. The global `validation` component remains the repository-wide acceptance plan.
+
 5. Confirm the plan has no unresolved required questions (no `- [ ] REQUIRED:` in `open_questions`).
 6. Confirm the human approved the plan or explicitly requested a finished handoff.
 

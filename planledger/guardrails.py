@@ -13,8 +13,10 @@ FILE_REF_RE = re.compile(
     r"(?m)(?:\[[^\]]+\]\((?!https?://)[^)]+\)|`[A-Za-z0-9_./-]+\.[A-Za-z0-9]+`)"
 )
 COMMAND_RE = re.compile(
-    r"(?m)(?:`(?:python|pytest|ruff|mypy|planledger)[^`]+`|"
-    r"^\s*(?:python|pytest|ruff|mypy|planledger)\b)"
+    r"(?im)(?:`(?:python|pytest|ruff|mypy)\s+[^`]+`|"
+    r"`planledger(?:\s+[^`]+)?`|"
+    r"^\s*(?:python|pytest|ruff|mypy)\b|"
+    r"^\s*planledger(?:\s|$))",
 )
 UNRESOLVED_REQUIRED_QUESTION_RE = re.compile(
     r"(?im)^[-*]\s+\[\s\]\s+REQUIRED(?:\((?P<topic>[a-z0-9_-]+)\))?:\s*(?P<question>.+?)\s*$"
@@ -122,6 +124,13 @@ def validate_handoff_contents(contents: dict[str, str]) -> list[str]:
         if not FILE_REF_RE.search(block):
             errors.append(f"{label} must reference at least one target file.")
 
+        if not re.search(
+            r"(?im)^\*\*Validation\*\*|^#+\s+Validation",
+            block,
+        ):
+            errors.append(f"{label} must contain a Validation section.")
+        if not COMMAND_RE.search(block):
+            errors.append(f"{label} must contain at least one validation command.")
     if not FILE_REF_RE.search(contents.get("target_files", "")):
         errors.append(
             "Component 'target_files' must contain at least one "

@@ -175,12 +175,7 @@ def _parse_prompt_profile(
         "min_resolved_required_questions_before_done",
         DEFAULT_MIN_RESOLVED_REQUIRED_QUESTIONS_BEFORE_DONE,
     )
-    if isinstance(raw_min, bool) or not isinstance(raw_min, int):
-        warnings.append(
-            f"prompt_profiles.{name}.min_resolved_required_questions_before_done "
-            "must be zero or a positive integer; fell back to 0."
-        )
-    elif raw_min < 0:
+    if isinstance(raw_min, bool) or not isinstance(raw_min, int) or raw_min < 0:
         warnings.append(
             f"prompt_profiles.{name}.min_resolved_required_questions_before_done "
             "must be zero or a positive integer; fell back to 0."

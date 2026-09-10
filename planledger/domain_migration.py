@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from planledger.errors import PlanledgerError
 from planledger.identity import parse_plan_number, parse_workshop_number
 from planledger.legacy_layout import (
     read_legacy_active,
@@ -130,11 +129,8 @@ def plan_domain_migration(
         # Legacy state may carry `project_uuid`; it is dropped silently during
         # migration per plan section 14.1. The new layout derives identity from
         # the Ledgercore manifest, not from Planledger state.
-        try:
-            plan_counter = read_legacy_counter(state, "next_plan_id")
-            workshop_counter = read_legacy_counter(state, "next_workshop_id")
-        except PlanledgerError:
-            raise
+        plan_counter = read_legacy_counter(state, "next_plan_id")
+        workshop_counter = read_legacy_counter(state, "next_workshop_id")
         existing_plans = tuple(_parse_kind_directory(source_root / "plans", "plan"))
         existing_workshops = tuple(
             _parse_kind_directory(source_root / "workshops", "workshop")

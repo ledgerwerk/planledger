@@ -439,14 +439,14 @@ def _prepare_staged_layout(plan: MigrationPlan) -> Path:
 
 __all__ = [
     "MigrationIssue",
+    "MigrationMode",
     "MigrationPlan",
     "MigrationResult",
-    "MigrationMode",
     "MigrationTarget",
     "apply_migration",
-    "inspection_to_dict",
     "inspect_migration",
     "inspect_storage_migration",
+    "inspection_to_dict",
     "plan_migration",
     "recover_storage_migration",
     "result_to_dict",
@@ -471,7 +471,7 @@ def inspect_storage_migration(project_root: Path) -> dict[str, object]:
             "path": str(candidate),
             "phase": getattr(journal, "phase", "unknown"),
         }
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive
         return {
             "exists": True,
             "path": str(candidate),

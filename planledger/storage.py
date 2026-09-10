@@ -217,6 +217,9 @@ def read_input_text(
     file_path: Path | None,
     *,
     stdin: bool = False,
+    text_option: str = "--text",
+    file_option: str = "--file",
+    stdin_option: str = "--stdin",
 ) -> str:
     selected_sources = sum(
         (
@@ -225,15 +228,16 @@ def read_input_text(
             stdin,
         )
     )
+    options = f"{text_option}, {file_option}, or {stdin_option}"
     if selected_sources == 0:
         raise PlanledgerError(
             "missing_input",
-            "Provide exactly one of --text, --file, or --stdin.",
+            f"Provide exactly one of {options}.",
         )
     if selected_sources > 1:
         raise PlanledgerError(
             "invalid_options",
-            "Use exactly one of --text, --file, or --stdin.",
+            f"Use exactly one of {options}.",
         )
     if stdin:
         return sys.stdin.read()
@@ -550,9 +554,11 @@ def _profile_done_errors(
     resolved = count_resolved_required_questions(contents.get("open_questions", ""))
     if resolved < required_count:
         return [
-            "Prompt profile 'planning_workshop' requires "
-            f"{required_count} resolved required question(s) before done; "
-            f"found {resolved}."
+            (
+                "Prompt profile 'planning_workshop' requires "
+                f"{required_count} resolved required question(s) before done; "
+                f"found {resolved}."
+            )
         ]
     return []
 
@@ -711,8 +717,10 @@ def apply_plan_mutations(
             "cancelled_plan",
             f"Plan {plan.plan_id} is cancelled and cannot be edited.",
             remediation=[
-                "Use --force only when you intentionally need "
-                "to override the terminal state.",
+                (
+                    "Use --force only when you intentionally need "
+                    "to override the terminal state."
+                ),
             ],
         )
     current_contents = load_component_contents(plan)
@@ -862,8 +870,7 @@ def snapshot_version(plan: Plan) -> Path:
 
 def parse_version(value: str) -> int:
     normalized = value.strip()
-    if normalized.startswith("v"):
-        normalized = normalized[1:]
+    normalized = normalized.removeprefix("v")
     try:
         parsed = int(normalized)
     except ValueError as exc:

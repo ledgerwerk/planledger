@@ -431,7 +431,7 @@ def test_next_action_surfaces_first_required_topic_question(
     res = payload["result"]
     assert res["next_item"] == "ask_plan_question"
     assert res["topic"] == "scope"
-    assert "question" in res and res["question"]
+    assert res.get("question")
     assert res["questions_remaining_count"] == 2
     assert res["prompt_profile"]["required_question_topics"] == ["scope", "tests"]
 

@@ -88,6 +88,7 @@ def test_no_stale_references_in_product_files() -> None:
             str(REPO_ROOT),
         ],
         capture_output=True,
+        check=False,
         text=True,
     )
     # grep exits 1 when no matches found, which is what we want
@@ -264,3 +265,49 @@ def test_skill_documents_plan_apply_dry_run_policy() -> None:
     assert "small targeted updates" in skill_lower
     assert "direct `planledger plan apply --file -` is acceptable" in skill
     assert "Do not force temporary files" in skill
+
+
+def test_skill_documents_file_driven_review_brief_protocol() -> None:
+    skill = (REPO_ROOT / "skills" / "planledger" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    skill_lower = skill.lower()
+
+    for phrase in (
+        "--request-file",
+        "implementation-review and recovery protocol",
+        "observed evidence",
+        "proposed changes",
+        "never claim a test passed unless it was executed",
+        "call sites",
+        "dead-code",
+        "p0",
+        "p1",
+        "p2",
+        "detailed implementation sequence",
+        "implementation brief",
+        "planledger plan export --out",
+    ):
+        assert phrase in skill_lower, f"Missing phrase: {phrase}"
+
+
+def test_implementation_brief_example_has_required_sections() -> None:
+    example = (REPO_ROOT / "examples" / "rendered_implementation_brief.md").read_text(
+        encoding="utf-8"
+    )
+    for heading in (
+        "# Dependency upgrade recovery",
+        "## Purpose",
+        "## Executive verdict",
+        "## Root cause analysis",
+        "## P0 — Resolve the integration regression",
+        "## P1 — Remove confirmed duplication",
+        "## Detailed implementation sequence",
+        "## Full acceptance checklist",
+        "## Non-goals",
+        "## Final recommendation",
+        "**Target files**",
+        "**Acceptance criteria**",
+        "**Validation**",
+    ):
+        assert heading in example

@@ -427,7 +427,7 @@ def storage_validate(ctx: typer.Context) -> None:
         issues: list[str] = []
         try:
             storage_data(workspace)
-        except Exception as exc:
+        except PlanledgerError as exc:
             issues.append(str(exc))
         result = _inspection_payload(inspection)
         result["issues"] = issues
@@ -1256,7 +1256,14 @@ def plan_create(
                 workshop, ledger_code=workspace.ledger_code
             )["global_ref"]
             return built, _summary_message(built, "Created from workshop")
-        request_text = read_input_text(request, request_file, stdin=request_stdin)
+        request_text = read_input_text(
+            request,
+            request_file,
+            stdin=request_stdin,
+            text_option="--request",
+            file_option="--request-file",
+            stdin_option="--stdin",
+        )
         created = create_plan(
             workspace,
             title=title,
@@ -1607,11 +1614,28 @@ def plan_build(
         "--include-empty",
         help="Include empty optional sections",
     ),
+    include_request: bool = typer.Option(
+        False,
+        "--include-request",
+        help="Include the original request in the rendered handoff",
+    ),
+    include_history: bool = typer.Option(
+        False,
+        "--include-history",
+        help="Include Planledger change history in the rendered handoff",
+    ),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
         resolved = resolve_plan_id(workspace, explicit=plan_opt, positional=plan_id)
-        built = build_plan(workspace, resolved, out=out, include_empty=include_empty)
+        built = build_plan(
+            workspace,
+            resolved,
+            out=out,
+            include_empty=include_empty,
+            include_request=include_request,
+            include_history=include_history,
+        )
         message = (
             built["markdown"] if print_output else _summary_message(built, "Built")
         )
@@ -1635,6 +1659,16 @@ def plan_export(
         "--include-empty",
         help="Include empty optional sections",
     ),
+    include_request: bool = typer.Option(
+        False,
+        "--include-request",
+        help="Include the original request in the rendered handoff",
+    ),
+    include_history: bool = typer.Option(
+        False,
+        "--include-history",
+        help="Include Planledger change history in the rendered handoff",
+    ),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
@@ -1647,6 +1681,8 @@ def plan_export(
             resolved,
             out=output_path,
             include_empty=include_empty,
+            include_request=include_request,
+            include_history=include_history,
         )
         return built, f"Exported {resolved} -> {built['output_path']}"
 
@@ -1797,7 +1833,14 @@ def workshop_create(
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         workspace = _require_workspace(ctx)
-        text = read_input_text(request, request_file, stdin=request_stdin)
+        text = read_input_text(
+            request,
+            request_file,
+            stdin=request_stdin,
+            text_option="--request",
+            file_option="--request-file",
+            stdin_option="--stdin",
+        )
         created = create_workshop(workspace, title, text, status)
         built = build_workshop(workspace, created.workshop_id)
         return built, _summary_workshop_message(built, "Created")

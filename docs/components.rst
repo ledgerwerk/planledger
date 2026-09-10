@@ -84,3 +84,5 @@ Every todo item in the ``todo_items`` component should follow this structure:
    **Validation**
 
    - `python -m pytest path/to/test_file.py -q`
+
+A component whose first non-whitespace content begins with ``## `` is rendered as a complete Markdown fragment without the component's canonical wrapper heading. Ordinary content keeps the canonical heading. For example, a ``summary`` component beginning with ``## Purpose`` renders that heading directly.

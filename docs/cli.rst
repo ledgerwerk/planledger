@@ -62,8 +62,8 @@ Build, validate, and version
 
 .. code-block:: text
 
-   planledger plan build PLAN_ID [--out PATH] [--print] [--include-empty]
-   planledger plan export [PLAN_ID] [--plan PLAN_ID] [--out PATH] [--include-empty]
+   planledger plan build PLAN_ID [--out PATH] [--print] [--include-empty] [--include-request] [--include-history]
+   planledger plan export [PLAN_ID] [--plan PLAN_ID] [--out PATH] [--include-empty] [--include-request] [--include-history]
    planledger plan validate PLAN_ID
    planledger plan versions PLAN_ID
    planledger plan diff PLAN_ID --from v0001 --to v0002

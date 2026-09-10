@@ -1,4 +1,4 @@
-# ruff: noqa: E402,E501
+# ruff: noqa: E501
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,13 +23,35 @@ from planledger.storage import (
     versioned_rendered_path,
 )
 
-RENDERED_PLAN_SCHEMA = "planledger.rendered_plan.v1"
+RENDERED_PLAN_SCHEMA = "planledger.rendered_plan.v2"
+
+
+def _append_component(
+    lines: list[str],
+    spec: Any,
+    content: str,
+    *,
+    include_empty: bool,
+) -> None:
+    body = content.rstrip("\n")
+    if not body and not include_empty and not spec.required:
+        return
+    if body.lstrip().startswith("## "):
+        lines.append(body)
+    else:
+        lines.append(f"## {spec.title}")
+        lines.append("")
+        if body:
+            lines.append(body)
+    lines.append("")
 
 
 def render_plan_markdown(
     plan: Plan,
     *,
     include_empty: bool = False,
+    include_request: bool = False,
+    include_history: bool = False,
     generated_at: str | None = None,
     ledger_code: str = DEFAULT_LEDGER_CODE,
 ) -> str:
@@ -60,37 +82,33 @@ def render_plan_markdown(
         "",
         f"# {plan.title}",
         "",
-        f"Plan: `{plan.plan_id}`  ",
-        f"Ref: `{ref.global_ref}`  ",
-        f"Version: `{version_label(plan.version)}`  ",
-        f"Status: `{plan.status}`",
-        "",
     ]
     for key in ordered_component_keys(plan.components):
+        if key == "request" and not include_request:
+            continue
         spec = plan.components[key]
         content = load_component_content(plan, key)
-        if not content.strip() and not include_empty and not spec.required:
-            continue
-        lines.append(f"## {spec.title}")
+        _append_component(
+            lines,
+            spec,
+            content,
+            include_empty=include_empty,
+        )
+    if include_history:
+        lines.extend(["## Change history", ""])
+        history = plan.metadata.get("history", [])
+        if isinstance(history, list) and history:
+            for entry in history:
+                if not isinstance(entry, dict):
+                    continue
+                version = version_label(int(entry.get("version", 0)))
+                status = str(entry.get("status") or "")
+                reason = str(entry.get("reason") or "").strip()
+                suffix = f" — {reason}" if reason else ""
+                lines.append(f"- {version} — {status}{suffix}")
+        else:
+            lines.append("- No recorded changes.")
         lines.append("")
-        if content:
-            lines.append(content.rstrip("\n"))
-        lines.append("")
-    history = plan.metadata.get("history", [])
-    lines.append("## Change history")
-    lines.append("")
-    if isinstance(history, list) and history:
-        for entry in history:
-            if not isinstance(entry, dict):
-                continue
-            version = version_label(int(entry.get("version", 0)))
-            status = str(entry.get("status") or "")
-            reason = str(entry.get("reason") or "").strip()
-            suffix = f" — {reason}" if reason else ""
-            lines.append(f"- {version} — {status}{suffix}")
-    else:
-        lines.append("- No recorded changes.")
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -100,6 +118,8 @@ def build_plan(
     *,
     out: Path | None = None,
     include_empty: bool = False,
+    include_request: bool = False,
+    include_history: bool = False,
 ) -> dict[str, Any]:
     plan = load_plan(workspace, plan_id)
     errors = validate_plan(plan, for_done=plan.status == "done")
@@ -122,6 +142,8 @@ def build_plan(
     markdown = render_plan_markdown(
         plan,
         include_empty=include_empty,
+        include_request=include_request,
+        include_history=include_history,
         generated_at=generated_at,
         ledger_code=workspace.ledger_code,
     )

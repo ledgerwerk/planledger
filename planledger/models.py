@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from planledger.project_context import Workspace as Workspace
+from planledger.project_context import Workspace
 
 PlanStatus = Literal["new", "in_progress", "rework", "cancelled", "done"]
 WorkshopStatus = Literal["new", "exploring", "shaped", "planned", "cancelled"]
@@ -17,7 +17,7 @@ class AppContext:
     json_output: bool
 
 
-__all__ = ["AppContext", "Workspace", "ComponentSpec", "Plan", "Workshop"]
+__all__ = ["AppContext", "ComponentSpec", "Plan", "Workshop", "Workspace"]
 
 
 @dataclass

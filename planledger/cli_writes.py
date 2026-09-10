@@ -55,4 +55,4 @@ def require_quiescent(project_root: Path) -> None:
         ) from exc
 
 
-__all__ = ["with_planledger_write_lock", "require_quiescent"]
+__all__ = ["require_quiescent", "with_planledger_write_lock"]

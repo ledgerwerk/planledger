@@ -45,6 +45,21 @@ safely interpreted.
    planledger plan create --title "Short description" \
        --request "Full request text"
 Use local ids in normal CLI examples. Global selectors such as
+
+If the request already exists on disk, use the file as the input transport instead of copying its contents into `--request`:
+
+.. code-block:: bash
+
+   planledger plan create --title "Review Ledgercore 0.5 migration" \\
+       --request-file planning/review-request.md
+
+Planledger snapshots the exact UTF-8 content into the `request` component. The source file can be deleted or changed after creation without changing the plan.
+
+For implementation reviews and failing-test recovery, inspect the repository before writing conclusions. Establish a practical baseline, record exact commands and counts, separate production defects from stale tests, inspect call sites before dead-code claims, prioritize P0/P1/P2 findings, and stage file-level TODOs. Keep observed evidence separate from proposed changes. Export direct handoffs with an explicit descriptive path:
+
+.. code-block:: bash
+
+   planledger plan export --out ledgercore_0_5_review_implementation_brief.md
 ``pl:plan-0001`` are accepted when a plan is referenced across ledgers. The
 canonical global ref is derived and does not create task-manager integration.
 

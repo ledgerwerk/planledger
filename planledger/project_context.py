@@ -333,7 +333,7 @@ def inspect_project_context(start: Path) -> ProjectInspection:
         legacy = discover_legacy_source(root)
     except PlanledgerError as exc:
         return ProjectInspection(state=_state_for_error(exc))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ProjectInspection(
             state=ProjectState("invalid", (str(exc) or type(exc).__name__,))
         )
@@ -367,7 +367,7 @@ def inspect_project_context(start: Path) -> ProjectInspection:
         return ProjectInspection(
             state=_state_for_error(exc), locator=locator, legacy=legacy
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ProjectInspection(
             state=ProjectState("invalid", (str(exc) or type(exc).__name__,)),
             locator=locator,
