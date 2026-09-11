@@ -33,8 +33,9 @@ def _write_record(root: Path, record_id: str = "plan-0001") -> bytes:
     record = root / "plans" / record_id
     record.mkdir(parents=True)
     content = f"id: {record_id}\ntype: plan\n"
-    (record / "plan.yaml").write_text(content, encoding="utf-8")
-    return content.encode()
+    record_bytes = content.encode("utf-8")
+    (record / "plan.yaml").write_bytes(record_bytes)
+    return record_bytes
 
 
 def test_canonical_external_to_project_is_real_copy_transaction(tmp_path: Path) -> None:
