@@ -164,9 +164,7 @@ def test_validation_and_assessment_delegate_to_ledgercore(
     )
 
     assert (
-        backend.validate_planledger_layout_migration(
-            object(), project_root=tmp_path
-        )
+        backend.validate_planledger_layout_migration(object(), project_root=tmp_path)
         is validation
     )
     assert (
@@ -207,15 +205,11 @@ def test_recovery_delegates_policy_and_hooks(monkeypatch, tmp_path: Path) -> Non
 
 def test_adapter_preserves_ledgercore_error_code(monkeypatch, tmp_path: Path) -> None:
     def fail(*args: object, **kwargs: object) -> object:
-        raise StorageMigrationError(
-            "blocked", code="STORAGE_MIGRATION_TEST_BLOCKED"
-        )
+        raise StorageMigrationError("blocked", code="STORAGE_MIGRATION_TEST_BLOCKED")
 
     monkeypatch.setattr(backend, "validate_storage_migration_plan", fail)
     try:
-        backend.validate_planledger_layout_migration(
-            object(), project_root=tmp_path
-        )
+        backend.validate_planledger_layout_migration(object(), project_root=tmp_path)
     except PlanledgerError as exc:
         assert exc.details["ledgercore_code"] == "STORAGE_MIGRATION_TEST_BLOCKED"
         assert exc.details["ledgercore_error_type"] == "StorageMigrationError"

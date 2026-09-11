@@ -256,10 +256,9 @@ def _plan_from_canonical(
             "PLANLEDGER_MOUNT_INVALID",
             "Resolved target layout has no data mount.",
         )
-    storage_changed = (
-        source_data_root.resolve(strict=False)
-        != target_mount.path.resolve(strict=False)
-    )
+    storage_changed = source_data_root.resolve(
+        strict=False
+    ) != target_mount.path.resolve(strict=False)
     ledgercore_plan = None
     blockers: list[MigrationIssue] = []
     if storage_changed:
@@ -303,7 +302,6 @@ def _plan_from_canonical(
         warnings=(),
         migration_required=migration_required,
     )
-
 
 
 def _plan_from_legacy(
@@ -625,6 +623,7 @@ __all__ = [
     "result_to_dict",
 ]
 
+
 def _select_storage_migration_journal(
     project_root: Path, journal_path: Path | None = None
 ) -> tuple[Path, object] | None:
@@ -739,9 +738,7 @@ def recover_storage_migration(
             path,
             policy=policy,
             dry_run=False,
-            quiescence_check=lambda: require_planledger_quiescent(
-                project_root
-            ),
+            quiescence_check=lambda: require_planledger_quiescent(project_root),
             project_root=project_root.resolve(strict=False),
         )
     if isinstance(result, RecoveryAssessment):

@@ -48,6 +48,7 @@ class MigrationReceipt:
     ledgercore_items_completed: int | None = None
     ledgercore_source_removed: bool | None = None
 
+
 def _now_iso() -> str:
     from ledgercore.time import utc_now_iso
 

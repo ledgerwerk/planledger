@@ -447,17 +447,15 @@ def storage_set(
 
     app_ctx = _context(ctx)
     root_path = workspace_root_from_context(app_ctx)
-    target: Literal["manifest", "local"] = (
-        "local" if local_override else "manifest"
-    )
+    target: Literal["manifest", "local"] = "local" if local_override else "manifest"
     if not (project or local_override):
         project = True
     activated = storage != "external"
+
     def _has_planledger_records(data_root: Path) -> bool:
         ignored = {"storage.yaml", ".ledger-project.toml"}
         return any(
-            path.is_file() and path.name not in ignored
-            for path in data_root.rglob("*")
+            path.is_file() and path.name not in ignored for path in data_root.rglob("*")
         )
 
     try:

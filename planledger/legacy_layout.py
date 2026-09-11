@@ -112,7 +112,6 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
                 if isinstance(uuid_obj, str) and uuid_obj:
                     schema2_project_uuid = uuid_obj
 
-
     candidates: list[LegacySource] = []
     for name in ("planledger.toml", ".planledger.toml"):
         candidate = project_root / name
@@ -195,9 +194,7 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
         )
 
     proposed_data = ledger_dir / "planledger"
-    if proposed_data.is_dir() and (
-        not manifest_path.is_file() or schema2_manifest
-    ):
+    if proposed_data.is_dir() and (not manifest_path.is_file() or schema2_manifest):
         candidates.append(
             LegacySource(
                 kind="repository_local_proposal",
@@ -207,9 +204,7 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
         )
 
     siblings_data = project_root.parent / "ledger" / "planledger"
-    if siblings_data.is_dir() and (
-        not manifest_path.is_file() or schema2_manifest
-    ):
+    if siblings_data.is_dir() and (not manifest_path.is_file() or schema2_manifest):
         candidates.append(
             LegacySource(
                 kind="namespaced_workspace",

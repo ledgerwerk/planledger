@@ -1,0 +1,93 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 2
+release_version: v0.4.0
+git_base_ref: v0.3.0
+git_base_sha: a4f0320206513c7391091ab62cf3dfb390523263
+git_head_ref: HEAD
+git_head_sha: 8cd22032db867e9b3442a2115dd1a6cf8401b269
+git_range: a4f0320206513c7391091ab62cf3dfb390523263..8cd22032db867e9b3442a2115dd1a6cf8401b269
+commit_count: 1
+rows:
+  - sha: 8cd22032db867e9b3442a2115dd1a6cf8401b269
+    source_ref: git:8cd22032db867e9b3442a2115dd1a6cf8401b269
+    short_sha: 8cd2203
+    changed_paths:
+      - .ledger/releaseledger/data/ledgers/main/events/events.jsonl
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.4.0/entries/entry-0001.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.4.0/entries/entry-0002.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.4.0/entries/entry-0003.md
+      - .ledger/releaseledger/data/ledgers/main/releases/v0.4.0/release.md
+      - README.md
+      - docs/agent-workflow.md
+      - docs/architecture.md
+      - docs/changelog.md
+      - docs/cli.md
+      - docs/contributing.md
+      - docs/installation.md
+      - docs/overview.md
+      - docs/storage.md
+      - planledger/cli.py
+      - planledger/domain_migration.py
+      - planledger/ledgercore_backend.py
+      - planledger/legacy_layout.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - pyproject.toml
+      - skills/planledger/README.md
+      - skills/planledger/SKILL.md
+      - tests/test_ledgercore_backend.py
+      - tests/test_ledgercore_import_boundaries.py
+      - tests/test_planledger_domain_migration.py
+      - tests/test_planledger_ledgercore_context.py
+      - tests/test_sibling_storage_migration.py
+      - tests/test_storage_migration_execution.py
+    stats:
+      files_changed: 0
+      insertions: 1320
+      deletions: 217
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/agent-workflow.md
+      - docs/architecture.md
+      - docs/changelog.md
+      - docs/cli.md
+      - docs/contributing.md
+      - docs/installation.md
+      - docs/overview.md
+      - docs/storage.md
+      - planledger/cli.py
+      - planledger/domain_migration.py
+      - planledger/ledgercore_backend.py
+      - planledger/legacy_layout.py
+      - planledger/migration.py
+      - planledger/project_binding.py
+      - planledger/project_context.py
+      - pyproject.toml
+      - skills/planledger/README.md
+      - skills/planledger/SKILL.md
+      - tests/test_ledgercore_backend.py
+      - tests/test_ledgercore_import_boundaries.py
+      - tests/test_planledger_domain_migration.py
+      - tests/test_planledger_ledgercore_context.py
+      - tests/test_sibling_storage_migration.py
+      - tests/test_storage_migration_execution.py
+    observed_behavior:
+      Updated Planledger storage integration for Ledgercore 0.6.1,
+      made storage migration copy-only with journaled recovery, added guarded schema-2
+      legacy conversion, and documented the migration and recovery contract; focused
+      tests cover adapter delegation, copy preservation, recovery assessment, and fail-closed
+      validation.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: adapt to ledgercore 0.6.x"
+    target_entry_id: entry-0001
+    notes:
+      The commit supports the three existing accepted release entries. Use the
+      commit as source ownership for entry-0001 and supporting provenance for entries
+      entry-0002 and entry-0003.

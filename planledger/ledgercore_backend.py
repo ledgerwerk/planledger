@@ -527,6 +527,8 @@ def write_planledger_storage_binding(path: Path, binding: StorageBinding) -> Non
         write_storage_binding(path, binding)
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
+
+
 def write_planledger_migration_stage_binding(
     stage_root: Path,
     *,
@@ -546,8 +548,6 @@ def write_planledger_migration_stage_binding(
             storage=storage,
         ),
     )
-
-
 
 
 def plan_planledger_layout_migration(
@@ -644,9 +644,7 @@ def plan_planledger_prepared_migration(
         "replace-owned" if replace_owned else "create-only"
     )
     expected_before = (
-        DestinationPrecondition(
-            "owned", fingerprint_storage_directory(target_root)
-        )
+        DestinationPrecondition("owned", fingerprint_storage_directory(target_root))
         if replace_owned
         else DestinationPrecondition("absent")
     )
@@ -709,10 +707,14 @@ def discover_planledger_storage_migration_journals(
     journal_path: Path | None = None,
 ) -> tuple[tuple[Path, object], ...]:
     """Inspect candidate Ledgercore journals and retain Planledger journals."""
-    candidates = [
-        journal_path
-    ] if journal_path is not None else sorted(
-        (project_root.resolve(strict=False) / ".ledger" / "migrations").glob("*.toml")
+    candidates = (
+        [journal_path]
+        if journal_path is not None
+        else sorted(
+            (project_root.resolve(strict=False) / ".ledger" / "migrations").glob(
+                "*.toml"
+            )
+        )
     )
     found: list[tuple[Path, object]] = []
     for candidate in candidates:

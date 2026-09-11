@@ -93,10 +93,7 @@ def test_schema2_legacy_migration_preserves_source_and_activates_schema3(
     (ledger / "plan").mkdir(parents=True)
     project_uuid = "00000000-0000-4000-8000-000000000201"
     (ledger / "ledger.toml").write_text(
-        "schema_version = 2\n"
-        "[project]\n"
-        f'uuid = "{project_uuid}"\n'
-        'name = "legacy"\n',
+        f'schema_version = 2\n[project]\nuuid = "{project_uuid}"\nname = "legacy"\n',
         encoding="utf-8",
     )
     (ledger / "plan" / "config.toml").write_text(
@@ -137,15 +134,20 @@ def test_schema2_legacy_migration_preserves_source_and_activates_schema3(
     assert target.exists()
     assert (target / "plans" / "plan-0001" / "plan.yaml").read_bytes() == record
     assert (target / "allocations" / "plans" / "plan-0002.toml").is_file()
-    assert (project / ".ledger" / "ledger.toml").read_text(encoding="utf-8").startswith(
-        "schema_version = 3"
+    assert (
+        (project / ".ledger" / "ledger.toml")
+        .read_text(encoding="utf-8")
+        .startswith("schema_version = 3")
     )
     assert source.exists()
-    assert sorted(
-        (path.relative_to(source), path.read_bytes())
-        for path in source.rglob("*")
-        if path.is_file()
-    ) == source_before
+    assert (
+        sorted(
+            (path.relative_to(source), path.read_bytes())
+            for path in source.rglob("*")
+            if path.is_file()
+        )
+        == source_before
+    )
     assert payload["source_preserved"] is True
     assert Path(payload["domain_receipt"]["ledgercore_journal_path"]).is_file()
 
@@ -224,9 +226,7 @@ def test_source_fingerprint_mismatch_fails_before_activation(tmp_path: Path) -> 
     (source / "unexpected.txt").write_text("changed", encoding="utf-8")
 
     with pytest.raises(PlanledgerError):
-        execute_planledger_layout_migration(
-            plan.ledgercore_plan, project_root=project
-        )
+        execute_planledger_layout_migration(plan.ledgercore_plan, project_root=project)
 
     assert source.joinpath("unexpected.txt").read_text(encoding="utf-8") == "changed"
     assert not (project / ".ledger" / "ledger.local.toml").exists()

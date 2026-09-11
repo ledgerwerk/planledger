@@ -91,6 +91,7 @@ def test_move_mode_is_rejected_before_mutation(tmp_path: Path) -> None:
     assert "PLANLEDGER_MIGRATION_MOVE_UNSUPPORTED" in result.stdout
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
+
 def test_migrate_rejects_legacy_sibling_ledger_root_option(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
