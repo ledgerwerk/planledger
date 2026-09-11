@@ -2,7 +2,7 @@
 
 ## Ownership boundary
 
-Ledgercore 0.5 owns cross-cutting Ledger mechanics:
+Ledgercore 0.6.1+ owns cross-cutting Ledger mechanics:
 
 - canonical project discovery;
 - schema-2 and schema-3 manifest parsing and writing;

@@ -106,4 +106,4 @@ def test_apply_writes_tombstone_files(tmp_path: Path) -> None:
     assert tombstone.is_file()
     content = tombstone.read_text(encoding="utf-8")
     assert "legacy_counter_gap" in content
-    assert "ledgercore-0.5.0" in content
+    assert "planledger-domain-schema-4" in content

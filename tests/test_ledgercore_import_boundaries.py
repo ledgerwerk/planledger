@@ -1,4 +1,4 @@
-"""Import-boundary enforcement for Ledgercore 0.5 adapter usage."""
+"""Import-boundary enforcement for supported Ledgercore adapter usage."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ ALLOWED_MODULES = {
 ALLOWED_TESTS_MODULES = {
     "tests/test_ledgercore_backend.py",
     "tests/test_ledgercore_import_boundaries.py",
-    "tests/test_planledger_ledgercore_050_context.py",
+    "tests/test_planledger_ledgercore_context.py",
     "tests/test_planledger_domain_migration.py",
     "tests/test_init.py",
     "tests/test_sibling_storage_migration.py",

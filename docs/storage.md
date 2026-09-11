@@ -1,6 +1,6 @@
 # Storage layout
 
-Planledger uses Ledgercore 0.5 schema-3 storage. The canonical topology is
+Planledger uses Ledgercore 0.6.1+ schema-3 storage. The canonical topology is
 deliberately narrow: a single `data` mount with one of three storage
 kinds (`external`, `user-data`, or `project`).
 
@@ -92,8 +92,8 @@ guard, same-store staging outside the source UUID directory,
 conflict-safe copying, schema/config transformation, binding creation,
 verification, and a migration receipt. Differing files, symlinks,
 malformed records, unknown entries, and UUID conflicts block the
-operation. Sources are preserved in `copy` mode; `move` mode renames
-the old source only after post-validation succeeds. Other tools'
+operation. Migrations are Ledgercore-managed, copy-only transactions: sources are
+preserved after success, and `--mode move` is rejected before mutation. Other tools'
 registrations and unrelated local overrides survive.
 
 ## Read-only inventory

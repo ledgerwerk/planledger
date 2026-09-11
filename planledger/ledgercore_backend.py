@@ -1,20 +1,21 @@
-"""Single Planledger integration point for Ledgercore 0.5.x public APIs.
+"""Single Planledger integration point for supported Ledgercore public APIs.
 
 Planledger domain modules must not import detailed Ledgercore storage,
 TOML, binding, layout, or migration APIs directly. They call this adapter
-instead. The adapter owns the Planledger-specific tool name, mount name,
-storage-kind validation, error mapping, and compatibility shims.
+instead. The adapter owns Planledger-specific Ledgercore integration, target
+layout planning, transaction hooks, error mapping, and recovery wrappers.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from ledgercore.atomic import atomic_write_text
-from ledgercore.config import LedgerProjectLocator
+from ledgercore.config import LedgerProjectLocator, locate_ledger_project
 from ledgercore.errors import (
     LedgerConfigError,
     LedgerCoreError,
@@ -35,13 +36,21 @@ from ledgercore.manifest import (
     StorageKind,
 )
 from ledgercore.migration import (
+    DestinationPrecondition,
+    RecoveryAssessment,
+    StorageMigrationHooks,
+    StorageMigrationItem,
     StorageMigrationPlan,
+    StorageMigrationPlanValidation,
     StorageMigrationResult,
+    assess_storage_migration,
     execute_storage_migration,
+    fingerprint_storage_directory,
     inspect_storage_migration,
     plan_schema_v2_to_v3,
     plan_storage_migration,
     recover_storage_migration,
+    validate_storage_migration_plan,
 )
 from ledgercore.storage_binding import (
     StorageBinding,
@@ -410,6 +419,62 @@ def set_planledger_data_target(
     return new_overrides
 
 
+def build_planledger_data_target(
+    project: LoadedLedgerProject,
+    *,
+    storage: _DataStorage,
+    external_root: str | None,
+    target: Literal["manifest", "local"] = "local",
+) -> tuple[LedgerProjectManifest, LedgerLocalOverrides]:
+    """Build target configuration without writing it to disk."""
+    if target == "local":
+        overrides = set_local_mount_override(
+            project,
+            TOOL_NAME,
+            DATA_MOUNT,
+            storage=storage,
+            root=external_root,
+        )
+        return project.manifest, overrides
+
+    new_mount = MountDefinition(
+        name=DATA_MOUNT,
+        storage=storage,
+        external_root=external_root if storage == "external" else None,
+    )
+    from ledgercore.manifest import LedgerRegistration
+
+    ledgers = dict(project.manifest.ledgers)
+    existing = ledgers.get(TOOL_NAME)
+    mounts = dict(existing.mounts) if existing is not None else {}
+    mounts[DATA_MOUNT] = new_mount
+    ledgers[TOOL_NAME] = LedgerRegistration(name=TOOL_NAME, mounts=mounts)
+    manifest = LedgerProjectManifest(
+        schema_version=3,
+        project_uuid=project.manifest.project_uuid,
+        project_name=project.manifest.project_name,
+        ledgers=cast(Mapping[str, Any], ledgers),
+    )
+    return manifest, project.local_overrides
+
+
+def resolve_planledger_target_layout(
+    project: LoadedLedgerProject,
+    target_manifest: LedgerProjectManifest,
+    target_overrides: LedgerLocalOverrides,
+) -> ResolvedLedgerLayout:
+    """Resolve a pure target configuration through Ledgercore."""
+    try:
+        return resolve_ledger_layout(
+            project.locator,
+            target_manifest,
+            TOOL_NAME,
+            local_overrides=target_overrides,
+        )
+    except LedgerCoreError as exc:
+        raise _map_error(exc) from exc
+
+
 def clear_planledger_data_override(project_root: Path) -> LedgerLocalOverrides | None:
     project = _wrap_load_ledger_project(
         load_ledger_project,
@@ -462,6 +527,27 @@ def write_planledger_storage_binding(path: Path, binding: StorageBinding) -> Non
         write_storage_binding(path, binding)
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
+def write_planledger_migration_stage_binding(
+    stage_root: Path,
+    *,
+    project_uuid: str,
+    storage: _DataStorage,
+) -> None:
+    """Write the Ledgercore binding for a prepared Planledger stage."""
+    write_planledger_storage_binding(
+        stage_root / ".ledger-project.toml",
+        StorageBinding(
+            schema_version=1,
+            layout_version=3,
+            project_uuid=project_uuid,
+            project_name=None,
+            tool=TOOL_NAME,
+            mount=DATA_MOUNT,
+            storage=storage,
+        ),
+    )
+
+
 
 
 def plan_planledger_layout_migration(
@@ -487,22 +573,165 @@ def plan_planledger_layout_migration(
         raise _map_error(exc) from exc
 
 
+def build_planledger_migration_manifest(
+    project_root: Path,
+    *,
+    project_uuid: str,
+    project_name: str,
+    data_storage: _DataStorage,
+    external_root: str | None,
+) -> LedgerProjectManifest:
+    """Build a schema-3 Planledger registration for explicit migration input."""
+    return ensure_planledger_registration(
+        project_root,
+        project_uuid=project_uuid,
+        project_name=project_name,
+        data_storage=data_storage,
+        external_root=external_root,
+    )
+
+
+def resolve_planledger_migration_data_path(
+    project_root: Path, manifest: LedgerProjectManifest
+) -> Path:
+    """Resolve a migration target mount without activating its configuration."""
+    locator = locate_ledger_project(
+        project_root,
+        legacy_tool_filenames=("planledger.toml", ".planledger.toml"),
+    )
+    if locator is None:
+        raise PlanledgerError(
+            "PLANLEDGER_LEDGER_PROJECT_INVALID",
+            "Cannot locate the Ledgercore project for migration planning.",
+        )
+    try:
+        empty_overrides = LedgerLocalOverrides(schema_version=3, ledgers={})
+        layout = resolve_ledger_layout(
+            locator, manifest, TOOL_NAME, local_overrides=empty_overrides
+        )
+    except LedgerCoreError as exc:
+        raise _map_error(exc) from exc
+    mount = layout.mounts.get(DATA_MOUNT)
+    if mount is None:
+        raise PlanledgerError(
+            "PLANLEDGER_MOUNT_INVALID",
+            "Migration target has no Planledger data mount.",
+        )
+    return mount.path
+
+
+def plan_planledger_prepared_migration(
+    source_root: Path,
+    target_root: Path,
+    *,
+    project_root: Path,
+    project_uuid: str,
+    storage: _DataStorage,
+    config_changes: LedgerProjectManifest,
+    replace_owned: bool = False,
+) -> StorageMigrationPlan:
+    """Create a Ledgercore plan for an already normalized migration source."""
+    source_binding = StorageBinding(
+        schema_version=1,
+        layout_version=3,
+        project_uuid=project_uuid,
+        project_name=None,
+        tool=TOOL_NAME,
+        mount=DATA_MOUNT,
+        storage=storage,
+    )
+    destination_policy: Literal["create-only", "replace-owned"] = (
+        "replace-owned" if replace_owned else "create-only"
+    )
+    expected_before = (
+        DestinationPrecondition(
+            "owned", fingerprint_storage_directory(target_root)
+        )
+        if replace_owned
+        else DestinationPrecondition("absent")
+    )
+    item = StorageMigrationItem(
+        component="mount",
+        tool_name=TOOL_NAME,
+        mount_name=DATA_MOUNT,
+        source=source_root,
+        destination=target_root,
+        source_binding=source_binding,
+        destination_binding=source_binding,
+        strategy="copy",
+        destination_policy=destination_policy,
+        expected_before=expected_before,
+        expected_source_fingerprint=fingerprint_storage_directory(source_root),
+    )
+    return StorageMigrationPlan(
+        migration_id=uuid.uuid4().hex,
+        project_uuid=project_uuid,
+        items=(item,),
+        config_changes=config_changes,
+        project_root=project_root,
+    )
+
+
 def execute_planledger_layout_migration(
     plan: StorageMigrationPlan,
     *,
-    mode: str = "move",
-    verify: str = "sha256",
+    verify: Literal["sha256", "size"] = "sha256",
     quiescence_check: Callable[[], None] | None = None,
     project_root: Path | None = None,
 ) -> StorageMigrationResult:
+    hooks = StorageMigrationHooks(quiescence_check=quiescence_check)
     try:
         return execute_storage_migration(
             plan,
-            mode=cast(Any, mode),
-            verify=cast(Any, verify),
-            quiescence_check=quiescence_check,
+            mode="copy",
+            verify=verify,
+            hooks=hooks,
             project_root=project_root,
         )
+    except LedgerCoreError as exc:
+        raise _map_error(exc) from exc
+
+
+def validate_planledger_layout_migration(
+    plan: StorageMigrationPlan,
+    *,
+    project_root: Path | None = None,
+) -> StorageMigrationPlanValidation:
+    try:
+        return validate_storage_migration_plan(plan, project_root=project_root)
+    except LedgerCoreError as exc:
+        raise _map_error(exc) from exc
+
+
+def discover_planledger_storage_migration_journals(
+    project_root: Path,
+    *,
+    journal_path: Path | None = None,
+) -> tuple[tuple[Path, object], ...]:
+    """Inspect candidate Ledgercore journals and retain Planledger journals."""
+    candidates = [
+        journal_path
+    ] if journal_path is not None else sorted(
+        (project_root.resolve(strict=False) / ".ledger" / "migrations").glob("*.toml")
+    )
+    found: list[tuple[Path, object]] = []
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        journal = inspect_planledger_storage_migration(candidate)
+        items = getattr(journal, "items", ())
+        if any(getattr(item, "tool_name", None) == TOOL_NAME for item in items):
+            found.append((candidate, journal))
+    return tuple(found)
+
+
+def assess_planledger_storage_migration(
+    journal_path: Path,
+    *,
+    project_root: Path | None = None,
+) -> RecoveryAssessment:
+    try:
+        return assess_storage_migration(journal_path, project_root=project_root)
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
 
@@ -518,9 +747,21 @@ def inspect_planledger_storage_migration(
 
 def recover_planledger_storage_migration(
     journal_path: Path,
-) -> StorageMigrationResult:
+    *,
+    policy: Literal["auto", "resume", "rollback"] = "auto",
+    dry_run: bool = False,
+    quiescence_check: Callable[[], None] | None = None,
+    project_root: Path | None = None,
+) -> StorageMigrationResult | RecoveryAssessment:
+    hooks = StorageMigrationHooks(quiescence_check=quiescence_check)
     try:
-        return recover_storage_migration(journal_path)
+        return recover_storage_migration(
+            journal_path,
+            policy=policy,
+            dry_run=dry_run,
+            hooks=hooks,
+            project_root=project_root,
+        )
     except LedgerCoreError as exc:
         raise _map_error(exc) from exc
 
@@ -585,12 +826,18 @@ __all__ = [
     "PLANLEDGER_REQUIRED_MOUNTS",
     "TOOL_NAME",
     "PlanledgerLedgerLayout",
+    "RecoveryAssessment",
+    "StorageMigrationPlan",
+    "assess_planledger_storage_migration",
     "atomic_write_text_file",
+    "build_planledger_data_target",
+    "build_planledger_migration_manifest",
     "clear_planledger_data_override",
     "derive_planledger_external_mount_path",
     "derive_planledger_project_mount_path",
     "derive_planledger_tool_config_path",
     "derive_planledger_user_data_mount_path",
+    "discover_planledger_storage_migration_journals",
     "ensure_planledger_registration",
     "execute_planledger_layout_migration",
     "initialize_planledger_external_store",
@@ -598,12 +845,17 @@ __all__ = [
     "inspect_planledger_storage_migration",
     "load_planledger_ledger_layout",
     "plan_planledger_layout_migration",
+    "plan_planledger_prepared_migration",
     "plan_schema_v2_to_v3_manifest",
     "read_planledger_storage_binding",
     "recover_planledger_storage_migration",
     "resolve_planledger_external_root",
+    "resolve_planledger_migration_data_path",
+    "resolve_planledger_target_layout",
     "set_planledger_data_target",
     "validate_planledger_external_store",
+    "validate_planledger_layout_migration",
     "write_planledger_manifest",
+    "write_planledger_migration_stage_binding",
     "write_planledger_storage_binding",
 ]

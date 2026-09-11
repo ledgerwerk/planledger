@@ -17,7 +17,7 @@ Planledger stores independent, structured, versioned implementation plans and re
 
 ## What it does
 
-- stores independent plans under `../ledger/planledger/<project-uuid>/data/plans/plan-0001/` through Ledgercore 0.5's schema-3 storage;
+- stores independent plans under `../ledger/planledger/<project-uuid>/data/plans/plan-0001/` through Ledgercore 0.6.1+'s schema-3 storage;
 - versions every meaningful plan change;
 - keeps each plan as modular component files;
 - renders a standalone Markdown artifact for human or coding-agent handoff;
@@ -66,7 +66,7 @@ planledger status --check
 planledger init
 
 # Create a new independent plan. The new plan becomes active.
-planledger plan create --title "Review Ledgercore 0.5 migration" --request-file planning/review-request.md
+planledger plan create --title "Review storage migration" --request-file planning/review-request.md
 
 # Populate components on the active plan (inspect repository files first)
 planledger plan component set context --file context.md
@@ -89,7 +89,7 @@ planledger plan validate
 planledger plan status done --reason "Ready for coding agent handoff."
 
 # Export rendered plan to workspace root for the harness
-planledger plan export --out ledgercore_0_5_review_implementation_brief.md
+planledger plan export --out storage_migration_implementation_brief.md
 
 ## File-driven implementation reviews
 
@@ -98,8 +98,8 @@ When a planning or review request already exists as a file, prefer `--request-fi
 Implementation-brief exports should use an explicit descriptive path when they are intended for direct handoff:
 
 ```bash
-planledger plan create --title "Review Ledgercore 0.5 migration" --request-file planning/review-request.md
-planledger plan export --out ledgercore_0_5_review_implementation_brief.md
+planledger plan create --title "Review storage migration" --request-file planning/review-request.md
+planledger plan export --out storage_migration_implementation_brief.md
 ```
 
 The default `plan-000X.md` export remains available for generic plans. `done` means the brief is structurally ready for a coding agent, not that the implementation tests have passed.
@@ -218,7 +218,7 @@ Explain the design and why it is acceptable.
 
 ## Filesystem layout
 
-Planledger uses Ledgercore 0.5 schema-3 storage. Committed project metadata
+Planledger uses Ledgercore 0.6.1+ schema-3 storage. Committed project metadata
 stays in `.ledger`; authoritative Planledger data lives in the external
 data mount and ends in `/data`:
 
@@ -261,7 +261,7 @@ storage = "user-data"
 
 Planledger resolves relative, absolute, and supported home-relative external
 roots through Ledgercore. Use `planledger --json status` or `planledger storage where` for authoritative paths. Use `planledger migrate` to inspect
-legacy layouts and `planledger migrate apply` to move them safely.
+legacy layouts and `planledger migrate apply` to perform a source-preserving copy transaction.
 
 ## CLI surface
 
@@ -271,10 +271,10 @@ planledger storage where [--json]
 planledger storage validate [--json]
 planledger storage set STORAGE [--root PATH] [--local-storage-override | --project]
 planledger storage clear-override [--json]
-planledger storage migration-status [--json]
-planledger storage recover [--json]
-planledger migrate [--source PATH] [--data-storage STORAGE] [--external-root PATH]
-planledger migrate apply [--source PATH] [--mode copy|move] [--data-storage STORAGE] [--external-root PATH] [--local-storage-override] [--backup-dir PATH] [--adopt-external-store] [--dry-run]
+planledger storage migration-status [--journal PATH] [--json]
+planledger storage recover [--journal PATH] [--policy auto|resume|rollback] [--dry-run] [--json]
+planledger migrate [--data-storage STORAGE] [--external-root PATH]
+planledger migrate apply [--mode copy] [--data-storage STORAGE] [--external-root PATH] [--dry-run]
 planledger status [--check] [--json]
 planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components] [--json]
 planledger doctor [--json]

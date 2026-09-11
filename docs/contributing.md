@@ -6,7 +6,7 @@
 pip install -e .
 ```
 
-The editable install resolves the released `ledgercore>=0.5.0,<0.6.0` runtime
+The editable install resolves the released `ledgercore>=0.6.1,<0.7.0` runtime
 dependency. Do not commit a path or editable Ledgercore dependency in package
 metadata.
 

@@ -22,7 +22,7 @@ cp -R ./skills/planledger ~/.agents/skills/planledger
 
 ## Canonical storage
 
-Ledgercore 0.5 schema-3 owns project discovery and storage resolution. Use
+Ledgercore 0.6.1+ schema-3 owns project discovery and storage resolution. Use
 `planledger --json status` or `planledger storage where` and treat the returned
 `config_path` and data `storage.path` as authoritative. Never calculate data
 paths manually or edit Planledger data directly.
@@ -31,5 +31,6 @@ The normal manifest is `.ledger/ledger.toml`, the stable Planledger config is
 `.ledger/planledger/config.toml`, and the data mount uses `external`,
 `user-data`, or `project`. The default external target is
 `../ledger/planledger/<project-uuid>/data`. Use `planledger migrate` for
-schema-2 and legacy projects. `external` does not imply Git behavior. Rendered
+schema-2 and legacy projects. Migration is copy-only and uses Ledgercore TOML
+journals under `.ledger/migrations/` for assessment and recovery. Rendered
 or exported Markdown remains the deliverable.

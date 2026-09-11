@@ -1,9 +1,13 @@
-"""Tests for the Ledgercore 0.5 adapter contract."""
+"""Tests for the supported Ledgercore adapter contract."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from ledgercore.errors import StorageMigrationError
+from ledgercore.migration import StorageMigrationHooks
+
+import planledger.ledgercore_backend as backend
 from planledger.errors import PlanledgerError
 from planledger.ledgercore_backend import (
     DATA_MOUNT,
@@ -121,3 +125,99 @@ def test_load_layout_rejects_cache_data_storage(tmp_path: Path) -> None:
         assert "STORAGE_TARGET_INVALID" in exc.code
         return
     raise AssertionError("expected PlanledgerError")
+
+
+def test_execute_uses_copy_mode_and_hooks(monkeypatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    callback = lambda: None
+
+    def fake_execute(plan: object, **kwargs: object) -> object:
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(backend, "execute_storage_migration", fake_execute)
+    backend.execute_planledger_layout_migration(
+        object(), quiescence_check=callback, project_root=tmp_path
+    )
+
+    assert observed["mode"] == "copy"
+    hooks = observed["hooks"]
+    assert isinstance(hooks, StorageMigrationHooks)
+    assert hooks.quiescence_check is callback
+    assert observed["project_root"] == tmp_path
+
+
+def test_validation_and_assessment_delegate_to_ledgercore(
+    monkeypatch, tmp_path: Path
+) -> None:
+    validation = object()
+    assessment = object()
+    monkeypatch.setattr(
+        backend,
+        "validate_storage_migration_plan",
+        lambda plan, *, project_root: validation,
+    )
+    monkeypatch.setattr(
+        backend,
+        "assess_storage_migration",
+        lambda path, *, project_root: assessment,
+    )
+
+    assert (
+        backend.validate_planledger_layout_migration(
+            object(), project_root=tmp_path
+        )
+        is validation
+    )
+    assert (
+        backend.assess_planledger_storage_migration(
+            tmp_path / "journal.toml", project_root=tmp_path
+        )
+        is assessment
+    )
+
+
+def test_recovery_delegates_policy_and_hooks(monkeypatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    callback = lambda: None
+    result = object()
+
+    def fake_recover(path: Path, **kwargs: object) -> object:
+        observed.update(kwargs)
+        return result
+
+    monkeypatch.setattr(backend, "recover_storage_migration", fake_recover)
+    assert (
+        backend.recover_planledger_storage_migration(
+            tmp_path / "journal.toml",
+            policy="rollback",
+            dry_run=True,
+            quiescence_check=callback,
+            project_root=tmp_path,
+        )
+        is result
+    )
+    assert observed["policy"] == "rollback"
+    assert observed["dry_run"] is True
+    assert observed["project_root"] == tmp_path
+    hooks = observed["hooks"]
+    assert isinstance(hooks, StorageMigrationHooks)
+    assert hooks.quiescence_check is callback
+
+
+def test_adapter_preserves_ledgercore_error_code(monkeypatch, tmp_path: Path) -> None:
+    def fail(*args: object, **kwargs: object) -> object:
+        raise StorageMigrationError(
+            "blocked", code="STORAGE_MIGRATION_TEST_BLOCKED"
+        )
+
+    monkeypatch.setattr(backend, "validate_storage_migration_plan", fail)
+    try:
+        backend.validate_planledger_layout_migration(
+            object(), project_root=tmp_path
+        )
+    except PlanledgerError as exc:
+        assert exc.details["ledgercore_code"] == "STORAGE_MIGRATION_TEST_BLOCKED"
+        assert exc.details["ledgercore_error_type"] == "StorageMigrationError"
+    else:
+        raise AssertionError("expected PlanledgerError")

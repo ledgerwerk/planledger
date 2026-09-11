@@ -1,14 +1,7 @@
-"""Planledger 0.3 exact 0.4-to-0.5 storage migration tests.
+"""Planledger storage migration execution tests for Ledgercore schema 3.
 
-Covers plan section 24.6: bare migration inspection is read-only; the
-exact source ``<uuid>`` to destination ``<uuid>/data`` migration is safe;
-staging is outside the source; no recursive self-copy; old data binding is
-excluded; new data binding is Ledgercore layout version 3; config moves
-from ``plan`` to ``planledger``; config content is preserved; schema 3
-is written only after verification; copy mode retains old source; move
-mode removes source only after post-validation; verification failure
-keeps old manifest/source active; recovery is idempotent; interrupted
-journal is reported by status/doctor.
+Covers read-only inspection, copy-only real transactions, source preservation,
+staging outside the source, no-op behavior, and recovery journal reporting.
 """
 
 from __future__ import annotations
@@ -86,26 +79,17 @@ def test_bare_migrate_inspection_is_read_only(tmp_path: Path) -> None:
     assert before == after
 
 
-def test_dry_run_migrate_apply_is_read_only(tmp_path: Path) -> None:
+def test_move_mode_is_rejected_before_mutation(tmp_path: Path) -> None:
     project = tmp_path / "project"
     _write_legacy_v2_workspace(
         project, project_uuid="00000000-0000-4000-8000-000000000011"
     )
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
-    result = _invoke(
-        project,
-        "migrate",
-        "apply",
-        "--mode",
-        "move",
-        "--external-root",
-        str(tmp_path / "ledger"),
-        "--dry-run",
-    )
-    assert result.exit_code == 0, result.stdout
-    after = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
-    assert before == after
+    result = _invoke(project, "migrate", "apply", "--mode", "move")
 
+    assert result.exit_code != 0
+    assert "PLANLEDGER_MIGRATION_MOVE_UNSUPPORTED" in result.stdout
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
 def test_migrate_rejects_legacy_sibling_ledger_root_option(tmp_path: Path) -> None:
     project = tmp_path / "project"
@@ -192,7 +176,7 @@ def test_migrate_inspection_does_not_create_migration_journal(
     _write_legacy_v2_workspace(
         project, project_uuid="00000000-0000-4000-8000-000000000014"
     )
-    journal = project / ".ledger" / "ledger-storage-migration.json"
+    journal = project / ".ledger" / "legacy-journal.json"
     assert not journal.exists()
     _invoke(project, "migrate")
     assert not journal.exists()

@@ -24,7 +24,7 @@ file suitable for human or coding-agent consumption.
 
 ## Storage and discovery
 
-Ledgercore 0.5 owns manifest discovery, bindings, external markers, and path
+Ledgercore 0.6.1+ owns manifest discovery, bindings, external markers, and path
 resolution. Planledger uses the `external`, `user-data`, or `project`
 data storage kinds. Use `planledger --json status` or `planledger storage where` for authoritative paths. Legacy layouts and `.planledger.toml` are
 migration inputs only and are handled by `planledger migrate`.

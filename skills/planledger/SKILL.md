@@ -40,13 +40,14 @@ Do not use Planledger for implementation tracking, task management, release note
 
 ## Canonical storage contract
 
-Planledger authoritative data is resolved through Ledgercore 0.5 schema-3.
+Planledger authoritative data is resolved through Ledgercore 0.6.1+ schema-3.
 Stable Planledger config is `.ledger/planledger/config.toml`. The shared
 manifest is `.ledger/ledger.toml`. The optional local override is
 `.ledger/ledger.local.toml`. Default data storage is `external` with root
-`../ledger`; the resolved data path ends in `/data` (for example
-`../ledger/planledger/<project-uuid>/data`). Use `planledger migrate` for
-legacy layouts.
+`../ledger`; the resolved data path ends in `/data`. Use `planledger migrate`
+for legacy layouts; apply performs a copy-only transaction and preserves sources.
+Incomplete transactions use Ledgercore TOML journals under `.ledger/migrations/`
+and are assessed or recovered with `storage migration-status` and `storage recover`.
 
 ## Core agent command path
 

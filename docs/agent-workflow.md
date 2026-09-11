@@ -49,7 +49,7 @@ Use local ids in normal CLI examples. Global selectors such as
 If the request already exists on disk, use the file as the input transport instead of copying its contents into `--request`:
 
 ```bash
-planledger plan create --title "Review Ledgercore 0.5 migration" \
+planledger plan create --title "Review storage migration" \
     --request-file planning/review-request.md
 ```
 

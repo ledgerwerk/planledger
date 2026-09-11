@@ -5,7 +5,7 @@ import json
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import typer
 
@@ -114,9 +114,6 @@ def _migration_message(payload: dict[str, Any]) -> str:
 @migrate_app.callback(invoke_without_command=True)
 def migrate_callback(
     ctx: typer.Context,
-    source: Path | None = typer.Option(
-        None, "--source", help="Legacy source data root"
-    ),
     data_storage: str = typer.Option(
         "external",
         "--data-storage",
@@ -139,8 +136,6 @@ def migrate_callback(
             target_external_root=external_root,
         )
         payload = cast(dict[str, Any], inspection_to_dict(inspection))
-        if source is not None:
-            payload["explicit_source"] = str(source)
         return payload, _migration_message(payload)
 
     _run_command(ctx, "migrate", run)
@@ -149,10 +144,11 @@ def migrate_callback(
 @migrate_app.command("apply")
 def migrate_apply(
     ctx: typer.Context,
-    source: Path | None = typer.Option(
-        None, "--source", help="Legacy source data root"
+    mode: str = typer.Option(
+        "copy",
+        "--mode",
+        help="Compatibility option; only copy is supported",
     ),
-    mode: str = typer.Option("move", "--mode", help="Migration mode: copy or move"),
     data_storage: str = typer.Option(
         "external",
         "--data-storage",
@@ -163,15 +159,7 @@ def migrate_apply(
         "--external-root",
         help="External root path for the target data storage",
     ),
-    backup_dir: Path | None = typer.Option(
-        None, "--backup-dir", help="Backup destination"
-    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Inspect without writing."),
-    adopt_external_store: bool = typer.Option(
-        False,
-        "--adopt-external-store",
-        help="Adopt an existing non-empty external store with manual consent",
-    ),
 ) -> None:
     def run() -> tuple[dict[str, Any], str]:
         root = workspace_root_from_context(_context(ctx))
@@ -183,8 +171,6 @@ def migrate_apply(
             dry_run=dry_run,
         )
         payload = cast(dict[str, Any], result_to_dict(result))
-        if source is not None:
-            payload["explicit_source"] = str(source)
         prefix = "Migration dry-run\n" if dry_run else "Migration applied\n"
         plan_kind = str(payload["plan"]["source_kind"])
         target_kind = str(payload["plan"]["target"]["storage"])
@@ -451,17 +437,76 @@ def storage_set(
 ) -> None:
     """Set the active Planledger data target."""
     from planledger.ledgercore_backend import (
+        build_planledger_data_target,
+        load_planledger_ledger_layout,
         resolve_planledger_external_root,
+        resolve_planledger_target_layout,
         set_planledger_data_target,
         validate_planledger_external_store,
     )
 
     app_ctx = _context(ctx)
     root_path = workspace_root_from_context(app_ctx)
-    target = "local" if local_override else "manifest"
+    target: Literal["manifest", "local"] = (
+        "local" if local_override else "manifest"
+    )
     if not (project or local_override):
         project = True
     activated = storage != "external"
+    def _has_planledger_records(data_root: Path) -> bool:
+        ignored = {"storage.yaml", ".ledger-project.toml"}
+        return any(
+            path.is_file() and path.name not in ignored
+            for path in data_root.rglob("*")
+        )
+
+    try:
+        current_layout = load_planledger_ledger_layout(
+            root_path, validate_storage=False
+        )
+        target_manifest, target_overrides = build_planledger_data_target(
+            current_layout.loaded_project,
+            storage=cast(Any, storage),
+            external_root=root,
+            target=target,
+        )
+        target_layout = resolve_planledger_target_layout(
+            current_layout.loaded_project, target_manifest, target_overrides
+        )
+        current_mount = current_layout.resolved_layout.mounts.get("data")
+        target_mount = target_layout.mounts.get("data")
+        if current_mount is not None and target_mount is not None:
+            source_root = current_mount.path.resolve(strict=False)
+            target_root = target_mount.path.resolve(strict=False)
+            if (
+                source_root != target_root
+                and source_root.is_dir()
+                and _has_planledger_records(source_root)
+            ):
+                raise PlanledgerError(
+                    "PLANLEDGER_STORAGE_MIGRATION_REQUIRED",
+                    "Cannot redirect populated Planledger storage with storage set.",
+                    remediation=[
+                        "Run: planledger migrate",
+                        "Run: planledger migrate apply",
+                    ],
+                )
+    except PlanledgerError as exc:
+        if exc.code == "PLANLEDGER_LEDGER_SCHEMA_MIGRATION_REQUIRED" or exc.code in {
+            "PLANLEDGER_REGISTRATION_MISSING",
+            "PLANLEDGER_LEDGER_PROJECT_INVALID",
+            "PLANLEDGER_LEDGER_TOML_INVALID",
+        }:
+            pass
+        else:
+            result = {"ok": False, "error": exc.to_dict()}
+            error_code = exc.code
+            _run_command(
+                ctx,
+                "storage.set",
+                lambda: (result, f"Storage set failed: {error_code}"),
+            )
+            return
     try:
         if storage == "external":
             if root is None:
@@ -529,24 +574,43 @@ def storage_clear_override(ctx: typer.Context) -> None:
 
 
 @storage_app.command("migration-status")
-def storage_migration_status(ctx: typer.Context) -> None:
+def storage_migration_status(
+    ctx: typer.Context,
+    journal: Path | None = typer.Option(None, "--journal", help="Journal path"),
+) -> None:
+    """Inspect a Ledgercore schema-3 storage migration journal."""
     from planledger.migration import inspect_storage_migration as _inspect_journal
 
     app_ctx = _context(ctx)
     root_path = workspace_root_from_context(app_ctx)
-    result = _inspect_journal(root_path)
+    result = _inspect_journal(root_path, journal_path=journal)
     message = f"Storage migration status: {result.get('phase', 'unknown')}"
     _run_command(ctx, "storage.migration_status", lambda: (result, message))
 
 
 @storage_app.command("recover")
-def storage_recover(ctx: typer.Context) -> None:
+def storage_recover(
+    ctx: typer.Context,
+    journal: Path | None = typer.Option(None, "--journal", help="Journal path"),
+    policy: str = typer.Option(
+        "auto", "--policy", help="Recovery policy: auto, resume, or rollback"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Assess recovery without modifying storage."
+    ),
+) -> None:
+    """Assess or recover a Ledgercore storage migration."""
     from planledger.migration import recover_storage_migration as _recover
 
     app_ctx = _context(ctx)
     root_path = workspace_root_from_context(app_ctx)
     try:
-        result = _recover(root_path)
+        result = _recover(
+            root_path,
+            journal_path=journal,
+            policy=cast(Any, policy),
+            dry_run=dry_run,
+        )
     except PlanledgerError as exc:
         result = {"ok": False, "error": exc.to_dict()}
         error_code = exc.code
@@ -556,8 +620,12 @@ def storage_recover(ctx: typer.Context) -> None:
             lambda: (result, f"Recovery failed: {error_code}"),
         )
         return
-    result = {"ok": True, **result} if isinstance(result, dict) else {"ok": True}
-    message = "Storage migration recovery complete."
+    result = {"ok": True, **result}
+    message = (
+        "Storage migration recovery assessment complete."
+        if dry_run
+        else "Storage migration recovery complete."
+    )
     _run_command(ctx, "storage.recover", lambda: (result, message))
 
 

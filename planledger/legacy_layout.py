@@ -10,7 +10,7 @@ canonical Planledger workspace.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +43,8 @@ class LegacySource:
     kind: LegacySourceKind
     project_root: Path
     legacy_config_path: Path | None = None
+    manifest_path: Path | None = None
+    planledger_config_path: Path | None = None
     legacy_data_root: Path | None = None
     legacy_external_root: Path | None = None
     project_uuid: str | None = None
@@ -81,6 +83,8 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
     ledger_dir = project_root / ".ledger"
     retired_artifacts = _discover_retired_artifacts(project_root)
     manifest_path = ledger_dir / "ledger.toml"
+    schema2_project_uuid: str | None = None
+    schema2_manifest = False
     if manifest_path.is_file():
         try:
             document = _read_toml(manifest_path)
@@ -89,6 +93,7 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
                 kind="invalid",
                 project_root=project_root,
                 legacy_config_path=manifest_path,
+                manifest_path=manifest_path,
                 blockers=(f"invalid manifest: {manifest_path}",),
             )
         schema = document.get("schema_version")
@@ -96,14 +101,17 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
             return LegacySource(
                 kind="canonical",
                 project_root=project_root,
+                manifest_path=manifest_path,
                 retired_artifacts=retired_artifacts,
             )
         if schema == 2:
-            return LegacySource(
-                kind="schema_migration_required",
-                project_root=project_root,
-                legacy_config_path=manifest_path,
-            )
+            schema2_manifest = True
+            project_obj = document.get("project")
+            if isinstance(project_obj, dict):
+                uuid_obj = project_obj.get("uuid")
+                if isinstance(uuid_obj, str) and uuid_obj:
+                    schema2_project_uuid = uuid_obj
+
 
     candidates: list[LegacySource] = []
     for name in ("planledger.toml", ".planledger.toml"):
@@ -187,7 +195,9 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
         )
 
     proposed_data = ledger_dir / "planledger"
-    if proposed_data.is_dir() and not manifest_path.is_file():
+    if proposed_data.is_dir() and (
+        not manifest_path.is_file() or schema2_manifest
+    ):
         candidates.append(
             LegacySource(
                 kind="repository_local_proposal",
@@ -197,7 +207,9 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
         )
 
     siblings_data = project_root.parent / "ledger" / "planledger"
-    if siblings_data.is_dir() and not manifest_path.is_file():
+    if siblings_data.is_dir() and (
+        not manifest_path.is_file() or schema2_manifest
+    ):
         candidates.append(
             LegacySource(
                 kind="namespaced_workspace",
@@ -206,6 +218,36 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
                 legacy_external_root=project_root.parent / "ledger",
             )
         )
+
+    if schema2_manifest:
+        plan_config_path: Path | None = ledger_dir / "plan" / "config.toml"
+        if plan_config_path is not None and not plan_config_path.is_file():
+            plan_config_path = None
+        candidates = [
+            replace(
+                candidate,
+                kind="schema_migration_required",
+                legacy_config_path=plan_config_path or candidate.legacy_config_path,
+                manifest_path=manifest_path,
+                planledger_config_path=plan_config_path,
+                project_uuid=schema2_project_uuid or candidate.project_uuid,
+                retired_artifacts=retired_artifacts,
+            )
+            for candidate in candidates
+        ]
+        if not candidates:
+            return LegacySource(
+                kind="schema_migration_required",
+                project_root=project_root,
+                legacy_config_path=plan_config_path,
+                manifest_path=manifest_path,
+                planledger_config_path=plan_config_path,
+                project_uuid=schema2_project_uuid,
+                blockers=(
+                    "schema-2 manifest has no discoverable Planledger data source",
+                ),
+                retired_artifacts=retired_artifacts,
+            )
 
     if not candidates:
         return LegacySource(kind="uninitialized", project_root=project_root)
@@ -217,7 +259,10 @@ def discover_legacy_source(project_root: Path) -> LegacySource:  # noqa: C901
         return LegacySource(
             kind="invalid",
             project_root=project_root,
+            manifest_path=manifest_path if schema2_manifest else None,
+            project_uuid=schema2_project_uuid,
             blockers=blockers,
+            retired_artifacts=retired_artifacts,
         )
     return candidates[0]
 

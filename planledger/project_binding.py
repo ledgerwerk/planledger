@@ -1,6 +1,6 @@
 """Legacy Planledger-owned binding markers are no longer used.
 
-Ledgercore 0.5 owns the ``.ledger-project.toml`` markers that mark config and
+Ledgercore owns the ``.ledger-project.toml`` markers that mark config and
 mount ownership. This module preserves read-only compatibility for external
 code that still imports the prior public names.
 """

@@ -6,8 +6,8 @@ Planledger exposes one `planledger` command with resource subcommands.
 
 ```text
 planledger init [--project-name NAME] [--data-storage external|user-data|project] [--external-root PATH] [--create-external-store]
-planledger migrate [--source PATH] [--data-storage external|user-data|project] [--external-root PATH]
-planledger migrate apply [--source PATH] [--mode copy|move] [--data-storage KIND] [--external-root PATH] [--local-storage-override] [--backup-dir PATH] [--adopt-external-store]
+planledger migrate [--data-storage external|user-data|project] [--external-root PATH]
+planledger migrate apply [--mode copy] [--data-storage external|user-data|project] [--external-root PATH] [--dry-run]
 planledger status [--check]
 planledger info [--plan PLAN_ID | --workshop WORKSHOP_ID] [--paths-only] [--no-components]
 planledger doctor
@@ -25,8 +25,8 @@ planledger storage set external --root ../ledger --local-storage-override
 planledger storage set user-data --local-storage-override
 planledger storage set project --project
 planledger storage clear-override
-planledger storage migration-status
-planledger storage recover
+planledger storage migration-status [--journal PATH]
+planledger storage recover [--journal PATH] [--policy auto|resume|rollback] [--dry-run]
 ```
 
 The storage object uses `mount`, `kind`, `source`, `external_root`,
@@ -97,11 +97,11 @@ records them in `open_questions`.
 
 ## Storage contract
 
-Ledgercore 0.5 owns schema-3 discovery, manifest parsing, bindings, external
+Ledgercore 0.6.1+ owns schema-3 discovery, manifest parsing, bindings, external
 markers, and resolved paths. Planledger uses the single `data` mount with
 `external`, `user-data`, or `project` storage. The default external root
 is `../ledger` and the default data path is
 `../ledger/planledger/<project-uuid>/data`. Legacy layouts and
 `.planledger.toml` are migration inputs only. Use `planledger migrate` and
-`planledger migrate apply` for them. No normal-runtime command uses provider
+`planledger migrate apply` for copy-only transactions. No normal-runtime command uses provider
 terminology or performs Git operations.

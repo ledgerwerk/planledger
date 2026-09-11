@@ -7,9 +7,11 @@ They never touch the Ledgercore manifest or the binding markers.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from planledger.errors import PlanledgerError
 from planledger.identity import parse_plan_number, parse_workshop_number
 from planledger.legacy_layout import (
     read_legacy_active,
@@ -40,6 +42,11 @@ class MigrationReceipt:
     preserve_active_workshop_id: bool
     receipt_path: Path | None
 
+    ledgercore_migration_id: str | None = None
+    ledgercore_journal_path: Path | None = None
+    ledgercore_phase: str | None = None
+    ledgercore_items_completed: int | None = None
+    ledgercore_source_removed: bool | None = None
 
 def _now_iso() -> str:
     from ledgercore.time import utc_now_iso
@@ -193,11 +200,30 @@ def apply_domain_migration(
     staged_root: Path,
     receipt: MigrationReceipt,
     *,
-    migration_tag: str = "ledgercore-0.5.0",
+    migration_tag: str = "planledger-domain-schema-4",
     created_at: str | None = None,
 ) -> MigrationReceipt:
     import yaml
 
+    source_resolved = source_root.resolve(strict=False)
+    staged_resolved = staged_root.resolve(strict=False)
+    if source_resolved == staged_resolved:
+        raise PlanledgerError(
+            "PLANLEDGER_DOMAIN_STAGE_SOURCE_COLLISION",
+            "Domain migration staging must be separate from the source tree.",
+        )
+    if not source_root.is_dir():
+        raise PlanledgerError(
+            "PLANLEDGER_MIGRATION_SOURCE_INVALID",
+            f"Domain migration source is not a directory: {source_root}",
+        )
+    staged_root.mkdir(parents=True, exist_ok=True)
+    for entry in source_root.iterdir():
+        destination = staged_root / entry.name
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.copytree(entry, destination, dirs_exist_ok=True)
+        elif entry.is_file() and not entry.is_symlink():
+            shutil.copy2(entry, destination)
     state_path = source_root / "storage.yaml"
     source_state: dict[str, object] = {}
     if state_path.is_file():
@@ -255,6 +281,11 @@ def apply_domain_migration(
         preserve_active_plan_id=receipt.preserve_active_plan_id,
         preserve_active_workshop_id=receipt.preserve_active_workshop_id,
         receipt_path=receipt.receipt_path,
+        ledgercore_migration_id=receipt.ledgercore_migration_id,
+        ledgercore_journal_path=receipt.ledgercore_journal_path,
+        ledgercore_phase=receipt.ledgercore_phase,
+        ledgercore_items_completed=receipt.ledgercore_items_completed,
+        ledgercore_source_removed=receipt.ledgercore_source_removed,
     )
 
 
@@ -262,8 +293,12 @@ def write_migration_receipt(
     staged_root: Path,
     receipt: MigrationReceipt,
     *,
-    ledgercore_journal_path: Path | None,
-    mode: str = "move",
+    ledgercore_migration_id: str | None = None,
+    ledgercore_journal_path: Path | None = None,
+    ledgercore_phase: str | None = None,
+    ledgercore_items_completed: int | None = None,
+    ledgercore_source_removed: bool | None = None,
+    mode: str = "copy",
     completed_at: str | None = None,
 ) -> Path:
     import json
@@ -272,7 +307,7 @@ def write_migration_receipt(
     migrations_dir.mkdir(parents=True, exist_ok=True)
     completed = completed_at or _now_iso()
     safe_tag = completed.replace(":", "").replace("-", "")
-    receipt_path = migrations_dir / (f"{safe_tag}-planledger-ledgercore-0.5.json")
+    receipt_path = migrations_dir / (f"{safe_tag}-planledger-migration.json")
     payload = {
         "schema_version": 1,
         "storage_schema_before": receipt.source_state_schema,
@@ -281,9 +316,13 @@ def write_migration_receipt(
         "workshop_tombstones_created": len(receipt.workshop_tombstones),
         "active_plan_preserved": receipt.preserve_active_plan_id,
         "active_workshop_preserved": receipt.preserve_active_workshop_id,
-        "ledgercore_journal_path": str(ledgercore_journal_path)
-        if ledgercore_journal_path
-        else None,
+        "ledgercore_migration_id": ledgercore_migration_id,
+        "ledgercore_journal_path": (
+            str(ledgercore_journal_path) if ledgercore_journal_path else None
+        ),
+        "ledgercore_phase": ledgercore_phase,
+        "ledgercore_items_completed": ledgercore_items_completed,
+        "ledgercore_source_removed": ledgercore_source_removed,
         "mode": mode,
     }
     receipt_path.write_text(

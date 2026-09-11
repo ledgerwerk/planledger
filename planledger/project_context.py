@@ -241,7 +241,7 @@ def load_workspace(
     if effective_environment.get("LEDGER_WORKSPACE_ROOT"):
         raise PlanledgerError(
             "PLANLEDGER_WORKSPACE_ENV_UNSUPPORTED",
-            "Planledger storage is fixed to Ledgercore 0.5 schema-3 mounts. "
+            "Planledger storage is fixed to Ledgercore 0.6.1+ schema-3 mounts. "
             "Unset LEDGER_WORKSPACE_ROOT and retry.",
             remediation=[
                 "Unset LEDGER_WORKSPACE_ROOT",
